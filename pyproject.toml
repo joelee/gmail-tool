@@ -1,0 +1,54 @@
+[project]
+name = "gmail-tool"
+version = "0.1.0"
+description = "CLI for Gmail labels and message queries"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "Joe Lee", email = "joel@joeworks.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "google-api-python-client>=2.170.0",
+    "google-auth>=2.40.0",
+    "google-auth-oauthlib>=1.2.2",
+    "python-dotenv>=1.1.0",
+    "typer>=0.16.0",
+]
+
+[project.scripts]
+gmail-tool = "gmail_tool:main"
+
+[dependency-groups]
+dev = [
+    "coverage>=7.8.0",
+    "pre-commit>=4.2.0",
+    "pytest>=8.3.0",
+    "pytest-cov>=6.1.0",
+    "ruff>=0.11.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "live_gmail: tests that access the real Gmail API using local credentials",
+]
+
+[tool.coverage.run]
+source = ["src/gmail_tool"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 60
+show_missing = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[build-system]
+requires = ["uv_build>=0.10.9,<0.11.0"]
+build-backend = "uv_build"
