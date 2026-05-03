@@ -166,6 +166,12 @@ uv run pytest --cov=src/gmail_tool --cov-report=term-missing
 uv run pre-commit run --all-files
 ```
 
+## Releases
+
+PyPI publishing is handled by the GitHub Actions `Publish` workflow on version tags such as `v0.2.1`.
+
+Release packaging steps are documented in `docs/release/packaging.md`.
+
 ### Live Gmail Integration Tests
 
 Live Gmail tests are opt-in and use your local `.env` and `config.toml`.
@@ -186,12 +192,9 @@ These tests verify Gmail API access against your real mailbox and are skipped un
 
 ## Documentation
 
-- `docs/plan/initial-delivery.md`
-- `docs/plan/2026-05-02-auth-diagnostics-command.md`
-- `docs/plan/backlog.md`
-- `docs/plan/done/2026-05-02-live-gmail-integration-tests.md`
-- `docs/architecture.md`
-- `docs/configuration.md`
-- `docs/google-credentials.md`
-- `docs/search-cheat-sheet.md`
-- `docs/usage.md`
+- [Architecture](docs/architecture.md)
+- [Configuration](docs/configuration.md)
+- [Google Credentials](docs/google-credentials.md)
+- [GMail Search Cheat Sheet](docs/search-cheat-sheet.md)
+- [Release Packaging](docs/release/packaging.md)
+- [Usage](docs/usage.md)

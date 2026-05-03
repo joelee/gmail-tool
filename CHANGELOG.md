@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v0.2.1 - 2026-05-03
+
+- Added PyPI packaging metadata and a tag-driven GitHub Actions publish workflow using Trusted Publishing.
+- Documented the release packaging flow for PyPI publication and Homebrew follow-up updates.
+
 ## v0.2.0 - 2026-05-03
 
 - Added a resumable `backup` action with config-backed and CLI override backup paths, writing `.eml` files by message timestamp.
