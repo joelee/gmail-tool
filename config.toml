@@ -1,5 +1,9 @@
 [app]
-default_limit = 1000
+default_limit = 100
+
+[search.saved_queries]
+recent_attachments = "has:attachment newer_than:30d"
+ring_recent = "from:no-reply@rs.ring.com newer_than:7d"
 
 [auth]
 mode = "oauth"

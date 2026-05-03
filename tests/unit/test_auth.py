@@ -9,6 +9,7 @@ from gmail_tool.config import (
     AuthSettings,
     GmailSettings,
     OAuthSettings,
+    SearchSettings,
     ServiceAccountSettings,
     Settings,
 )
@@ -16,7 +17,8 @@ from gmail_tool.config import (
 
 def test_build_credentials_provider_for_oauth() -> None:
     settings = Settings(
-        app=AppSettings(default_limit=1000),
+        app=AppSettings(default_limit=100),
+        search=SearchSettings(saved_queries={}),
         auth=AuthSettings(
             mode=AuthMode.OAUTH,
             scopes=["scope-a"],
@@ -36,7 +38,8 @@ def test_build_credentials_provider_for_oauth() -> None:
 
 def test_build_credentials_provider_for_service_account() -> None:
     settings = Settings(
-        app=AppSettings(default_limit=1000),
+        app=AppSettings(default_limit=100),
+        search=SearchSettings(saved_queries={}),
         auth=AuthSettings(
             mode=AuthMode.SERVICE_ACCOUNT,
             scopes=["scope-a"],

@@ -35,12 +35,26 @@ class GmailGateway(Protocol):
 
     def count_messages(self, label: str, query: str | None) -> int: ...
 
+    def list_message_ids(self, label: str | None, query: str | None) -> list[str]: ...
+
     def list_message_headers(
         self,
         label: str,
         query: str | None,
         limit: int,
     ) -> list[GmailMessageHeader]: ...
+
+    def search_message_headers(self, query: str | None, limit: int) -> list[GmailMessageHeader]: ...
+
+    def ensure_label(self, label_name: str) -> str: ...
+
+    def modify_message_labels(
+        self,
+        message_id: str,
+        *,
+        add_label_ids: list[str],
+        remove_label_ids: list[str],
+    ) -> None: ...
 
     def get_message(self, message_id: str) -> GmailMessage: ...
 
@@ -55,24 +69,37 @@ class GmailApiGateway:
         return [GmailLabel(id=item["id"], name=item["name"]) for item in response.get("labels", [])]
 
     def count_messages(self, label: str, query: str | None) -> int:
-        total = 0
+        return len(self.list_message_ids(label, query))
+
+    def list_message_ids(self, label: str | None, query: str | None) -> list[str]:
+        message_ids: list[str] = []
         page_token: str | None = None
         while True:
-            response = (
+            request = (
                 self._service.users()
                 .messages()
                 .list(
                     userId=self._user_id,
-                    labelIds=[label],
                     q=query,
                     pageToken=page_token,
                 )
-                .execute()
             )
-            total += len(response.get("messages", []))
+            if label is not None:
+                request = (
+                    self._service.users()
+                    .messages()
+                    .list(
+                        userId=self._user_id,
+                        labelIds=[label],
+                        q=query,
+                        pageToken=page_token,
+                    )
+                )
+            response = request.execute()
+            message_ids.extend(item["id"] for item in response.get("messages", []))
             page_token = response.get("nextPageToken")
             if page_token is None:
-                return total
+                return message_ids
 
     def list_message_headers(
         self,
@@ -93,6 +120,58 @@ class GmailApiGateway:
         )
         messages = response.get("messages", [])
         return [self._fetch_header(item["id"]) for item in messages]
+
+    def search_message_headers(self, query: str | None, limit: int) -> list[GmailMessageHeader]:
+        response = (
+            self._service.users()
+            .messages()
+            .list(
+                userId=self._user_id,
+                q=query,
+                maxResults=limit,
+            )
+            .execute()
+        )
+        messages = response.get("messages", [])
+        return [self._fetch_header(item["id"]) for item in messages]
+
+    def ensure_label(self, label_name: str) -> str:
+        for label in self.list_labels():
+            if label.name == label_name:
+                return label.id
+
+        response = (
+            self._service.users()
+            .labels()
+            .create(
+                userId=self._user_id,
+                body={
+                    "name": label_name,
+                    "labelListVisibility": "labelShow",
+                    "messageListVisibility": "show",
+                },
+            )
+            .execute()
+        )
+        return response["id"]
+
+    def modify_message_labels(
+        self,
+        message_id: str,
+        *,
+        add_label_ids: list[str],
+        remove_label_ids: list[str],
+    ) -> None:
+        (
+            self._service.users()
+            .messages()
+            .modify(
+                userId=self._user_id,
+                id=message_id,
+                body={"addLabelIds": add_label_ids, "removeLabelIds": remove_label_ids},
+            )
+            .execute()
+        )
 
     def get_message(self, message_id: str) -> GmailMessage:
         response = (

@@ -20,6 +20,11 @@ class AppSettings:
 
 
 @dataclass(frozen=True)
+class SearchSettings:
+    saved_queries: dict[str, str]
+
+
+@dataclass(frozen=True)
 class OAuthSettings:
     client_secret_file: str
     token_file: str
@@ -47,16 +52,18 @@ class GmailSettings:
 @dataclass(frozen=True)
 class Settings:
     app: AppSettings
+    search: SearchSettings
     auth: AuthSettings
     gmail: GmailSettings
 
 
 def load_settings(config_path: Path | None = None) -> Settings:
-    resolved_path = config_path or Path("config.toml")
+    resolved_path = discover_config_path(config_path)
     load_dotenv()
     data = tomllib.loads(resolved_path.read_text(encoding="utf-8"))
 
     app_data = data["app"]
+    search_data = data.get("search", {})
     auth_data = data["auth"]
     gmail_data = data["gmail"]
 
@@ -65,6 +72,7 @@ def load_settings(config_path: Path | None = None) -> Settings:
 
     return Settings(
         app=AppSettings(default_limit=int(app_data["default_limit"])),
+        search=SearchSettings(saved_queries=dict(search_data.get("saved_queries", {}))),
         auth=AuthSettings(
             mode=AuthMode(auth_data["mode"]),
             scopes=list(auth_data["scopes"]),
@@ -79,6 +87,39 @@ def load_settings(config_path: Path | None = None) -> Settings:
         ),
         gmail=GmailSettings(user_id=_read_env(gmail_data["user_id_env"])),
     )
+
+
+def discover_config_path(
+    config_path: Path | None = None,
+    *,
+    project_dir: Path | None = None,
+    etc_path: Path | None = None,
+) -> Path:
+    if config_path is not None:
+        return Path(config_path)
+
+    candidate_paths: list[Path] = []
+
+    env_config = os.getenv("GMAIL_TOOL_CONFIG")
+    if env_config:
+        candidate_paths.append(Path(env_config))
+
+    xdg_config_home = os.getenv("XDG_CONFIG_HOME")
+    if xdg_config_home:
+        candidate_paths.append(Path(xdg_config_home) / "gmail-tool" / "config.toml")
+
+    home = os.getenv("HOME")
+    if home:
+        candidate_paths.append(Path(home) / ".config" / "gmail-tool" / "config.toml")
+
+    candidate_paths.append(etc_path or Path("/etc/gmail-tool.toml"))
+    candidate_paths.append((project_dir or Path.cwd()) / "config.toml")
+
+    for candidate in candidate_paths:
+        if candidate.is_file():
+            return candidate
+
+    raise FileNotFoundError("No config.toml found in configured search locations")
 
 
 def _read_env(name: str, *, required: bool = True) -> str | None:

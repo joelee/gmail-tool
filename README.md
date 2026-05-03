@@ -44,10 +44,22 @@ uv sync --dev
 uv run gmail-tool labels
 ```
 
+Show the CLI version:
+
+```bash
+uv run gmail-tool --version
+```
+
+Enable debug output to stderr:
+
+```bash
+uv run gmail-tool --verbose labels
+```
+
 Or as JSON:
 
 ```bash
-uv run gmail-tool labels --format json
+uv run gmail-tool labels -f json
 ```
 
 Auth diagnostics:
@@ -62,25 +74,69 @@ Read a full message by identifier:
 uv run gmail-tool read <MESSAGE_ID>
 ```
 
+Search with a raw Gmail query:
+
+```bash
+uv run gmail-tool search from:bob@example.com has:attachment
+```
+
+Count search matches:
+
+```bash
+uv run gmail-tool search -a count from:bob@example.com
+```
+
+Add a label to all search matches:
+
+```bash
+uv run gmail-tool search -a add-label:FollowUp from:bob@example.com
+```
+
+List built-in search examples:
+
+```bash
+uv run gmail-tool search --list-query-examples
+```
+
+Print a Gmail search operator cheat sheet:
+
+```bash
+uv run gmail-tool search --cheat-sheet
+```
+
+Run a saved query from `config.toml`:
+
+```bash
+uv run gmail-tool search --saved-query recent_attachments
+```
+
 6. Count messages in a label:
 
 ```bash
-uv run gmail-tool label INBOX count
+uv run gmail-tool label INBOX -a count
 ```
+
+`gmail-tool label <LABEL>` accepts either an exact Gmail label name such as `@Later` or an exact label ID such as `Label_66`.
 
 7. List messages in a label:
 
 ```bash
-uv run gmail-tool label IMPORTANT list --limit 10 --starred true
+uv run gmail-tool label IMPORTANT -l 10 --starred true
 ```
 
 Or export them as CSV:
 
 ```bash
-uv run gmail-tool label IMPORTANT list --limit 10 --format csv
+uv run gmail-tool label IMPORTANT -l 10 -f csv
 ```
 
 Plain-text list output includes `message_id` values that can be passed to `read`.
+
+The `search` command returns the same message list structure as `label ... list`.
+
+Both `label` and `search` default to the `list` action. Use `--action` or `-a` to switch to `count`, `add-label:<name>`, or `remove-label:<name>`.
+
+The `label` command defaults to the `list` action. Use `--action count` or `-a count` to switch actions.
 
 8. List supported actions:
 
@@ -91,6 +147,8 @@ uv run gmail-tool label --list-actions
 ## Configuration
 
 See `config.toml`, `.env.sample`, and `docs/configuration.md`.
+
+All commands accept `--config <path>` or `-c <path>`. If omitted, config discovery falls back through environment, XDG, home config, `/etc`, and the project directory.
 
 ## Development
 
@@ -127,4 +185,5 @@ These tests verify Gmail API access against your real mailbox and are skipped un
 - `docs/architecture.md`
 - `docs/configuration.md`
 - `docs/google-credentials.md`
+- `docs/search-cheat-sheet.md`
 - `docs/usage.md`

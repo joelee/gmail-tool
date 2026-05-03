@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 from dataclasses import asdict, is_dataclass
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated
 
@@ -10,10 +11,78 @@ import typer
 
 from gmail_tool.actions import build_action_registry
 from gmail_tool.app import build_application
-from gmail_tool.config import load_settings
+from gmail_tool.config import Settings, discover_config_path, load_settings
 from gmail_tool.gmail import GmailLabel, GmailMessage, GmailMessageHeader
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(
+    no_args_is_help=True,
+    context_settings={"help_option_names": ["--help", "-h"]},
+)
+
+_verbose = False
+
+SEARCH_QUERY_EXAMPLES = [
+    "from:bob@example.com has:attachment",
+    "newer_than:7d",
+    "subject:invoice",
+    "label:INBOX is:unread",
+]
+
+SEARCH_CHEAT_SHEET = """# Gmail Search Operators Cheat Sheet
+
+## Core Operators
+
+- `from:` sender address or name
+  Example: `from:bob@example.com`
+- `to:` recipient address or name
+  Example: `to:alice@example.com`
+- `subject:` match subject text
+  Example: `subject:invoice`
+- quoted text for exact phrase matching
+  Example: `"monthly report"`
+
+## Status And Flags
+
+- `is:starred` starred messages
+- `is:unread` unread messages
+- `is:read` read messages
+- `has:attachment` messages with attachments
+- `is:important` important messages
+
+## Date And Time
+
+- `after:` messages after a date
+  Example: `after:2026/05/01`
+- `before:` messages before a date
+  Example: `before:2026/06/01`
+- `older_than:` relative age filter
+  Example: `older_than:30d`
+- `newer_than:` relative age filter
+  Example: `newer_than:7d`
+
+## Labels And Folders
+
+- `label:` specific label
+  Example: `label:INBOX`
+- `in:` system location
+  Example: `in:sent`
+
+## Size
+
+- `larger:` size in bytes
+  Example: `larger:1000000`
+- `smaller:` size in bytes
+  Example: `smaller:500000`
+
+## Boolean Operators
+
+- space means AND
+  Example: `from:bob@example.com has:attachment`
+- `OR` matches either side
+  Example: `from:bob@example.com OR from:alice@example.com`
+- `-` negates a term
+  Example: `-label:spam`
+"""
 
 
 def _render_json(rows: list[object]) -> str:
@@ -59,15 +128,52 @@ def _parse_starred(value: str | None) -> bool | None:
     raise typer.BadParameter("starred must be true or false")
 
 
+def _get_version() -> str:
+    try:
+        return version("gmail-tool")
+    except PackageNotFoundError:
+        return "0.0.0"
+
+
+def _debug(message: str) -> None:
+    if _verbose:
+        typer.echo(message, err=True)
+
+
+def _load_settings_with_debug(config: Path | None) -> Settings:
+    config_path = discover_config_path(config)
+    _debug(f"Using config: {config_path}")
+    return load_settings(config)
+
+
+@app.callback(invoke_without_command=True)
+def main_callback(
+    version_option: Annotated[
+        bool,
+        typer.Option("--version", "-V", help="Show the version and exit."),
+    ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-v", help="Print debug output to stderr."),
+    ] = False,
+) -> None:
+    global _verbose
+    _verbose = verbose
+
+    if version_option:
+        typer.echo(_get_version())
+        raise typer.Exit()
+
+
 @app.command("labels")
 def labels(
     config: Annotated[
-        Path,
-        typer.Option("--config", exists=True, dir_okay=False),
-    ] = Path("config.toml"),
-    output_format: Annotated[str | None, typer.Option("--format")] = None,
+        Path | None,
+        typer.Option("--config", "-c", dir_okay=False),
+    ] = None,
+    output_format: Annotated[str | None, typer.Option("--format", "-f")] = None,
 ) -> None:
-    application = build_application(load_settings(config))
+    application = build_application(_load_settings_with_debug(config))
     labels = application.list_labels()
     _emit_rows(labels, output_format=output_format, default_text=_format_labels_text)
 
@@ -75,11 +181,11 @@ def labels(
 @app.command("auth-check")
 def auth_check(
     config: Annotated[
-        Path,
-        typer.Option("--config", exists=True, dir_okay=False),
-    ] = Path("config.toml"),
+        Path | None,
+        typer.Option("--config", "-c", dir_okay=False),
+    ] = None,
 ) -> None:
-    application = build_application(load_settings(config))
+    application = build_application(_load_settings_with_debug(config))
     result = application.auth_check()
     for key, value in result.items():
         typer.echo(f"{key}={value}")
@@ -89,27 +195,95 @@ def auth_check(
 def read_message(
     message_id: str,
     config: Annotated[
-        Path,
-        typer.Option("--config", exists=True, dir_okay=False),
-    ] = Path("config.toml"),
+        Path | None,
+        typer.Option("--config", "-c", dir_okay=False),
+    ] = None,
 ) -> None:
-    application = build_application(load_settings(config))
+    application = build_application(_load_settings_with_debug(config))
     message = application.read_message(message_id)
     for line in _format_full_message_text(message):
         typer.echo(line)
 
 
+@app.command("search")
+def search_messages(
+    query_parts: Annotated[list[str] | None, typer.Argument()] = None,
+    config: Annotated[
+        Path | None,
+        typer.Option("--config", "-c", dir_okay=False),
+    ] = None,
+    action: Annotated[str, typer.Option("--action", "-a")] = "list",
+    saved_query: Annotated[str | None, typer.Option("--saved-query")] = None,
+    list_query_examples: Annotated[bool, typer.Option("--list-query-examples")] = False,
+    cheat_sheet: Annotated[bool, typer.Option("--cheat-sheet")] = False,
+    output_format: Annotated[str | None, typer.Option("--format", "-f")] = None,
+    limit: Annotated[int | None, typer.Option("--limit", "-l", min=1)] = None,
+    from_date: Annotated[str | None, typer.Option("--from-date")] = None,
+    to_date: Annotated[str | None, typer.Option("--to-date")] = None,
+    starred: Annotated[str | None, typer.Option("--starred")] = None,
+) -> None:
+    settings = _load_settings_with_debug(config)
+
+    if cheat_sheet:
+        typer.echo(SEARCH_CHEAT_SHEET)
+        return
+
+    if list_query_examples:
+        for example in SEARCH_QUERY_EXAMPLES:
+            typer.echo(example)
+        return
+
+    if output_format is not None and action != "list":
+        raise typer.BadParameter("--format is only supported for the list action")
+
+    query = _build_search_query(settings, saved_query=saved_query, query_parts=query_parts)
+
+    application = build_application(settings)
+    rows = application.search_messages(
+        action=action,
+        query=query,
+        limit=limit,
+        from_date=from_date,
+        to_date=to_date,
+        starred=_parse_starred(starred),
+    )
+    _emit_rows(rows, output_format=output_format, default_text=_format_message_headers_text)
+
+
+def _build_search_query(
+    settings: Settings,
+    *,
+    saved_query: str | None,
+    query_parts: list[str] | None,
+) -> str:
+    parts: list[str] = []
+
+    if saved_query is not None:
+        try:
+            parts.append(settings.search.saved_queries[saved_query])
+        except KeyError as exc:
+            raise typer.BadParameter(f"Unknown saved query: {saved_query}") from exc
+
+    if query_parts:
+        parts.append(" ".join(query_parts))
+
+    if not parts:
+        raise typer.BadParameter("at least one search argument is required")
+
+    return " ".join(parts)
+
+
 @app.command("label")
 def label_action(
     label: Annotated[str | None, typer.Argument()] = None,
-    action: Annotated[str | None, typer.Argument()] = None,
     config: Annotated[
-        Path,
-        typer.Option("--config", exists=True, dir_okay=False),
-    ] = Path("config.toml"),
+        Path | None,
+        typer.Option("--config", "-c", dir_okay=False),
+    ] = None,
+    action: Annotated[str, typer.Option("--action", "-a")] = "list",
     list_actions: Annotated[bool, typer.Option("--list-actions")] = False,
-    output_format: Annotated[str | None, typer.Option("--format")] = None,
-    limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
+    output_format: Annotated[str | None, typer.Option("--format", "-f")] = None,
+    limit: Annotated[int | None, typer.Option("--limit", "-l", min=1)] = None,
     from_date: Annotated[str | None, typer.Option("--from-date")] = None,
     to_date: Annotated[str | None, typer.Option("--to-date")] = None,
     starred: Annotated[str | None, typer.Option("--starred")] = None,
@@ -119,21 +293,24 @@ def label_action(
             typer.echo(action_name)
         return
 
-    if label is None or action is None:
-        raise typer.BadParameter("label and action are required unless --list-actions is used")
+    if label is None:
+        raise typer.BadParameter("label is required unless --list-actions is used")
 
     if output_format is not None and action != "list":
         raise typer.BadParameter("--format is only supported for the list action")
 
-    application = build_application(load_settings(config))
-    rows = application.run_label_action(
-        label=label,
-        action=action,
-        limit=limit,
-        from_date=from_date,
-        to_date=to_date,
-        starred=_parse_starred(starred),
-    )
+    application = build_application(_load_settings_with_debug(config))
+    try:
+        rows = application.run_label_action(
+            label=label,
+            action=action,
+            limit=limit,
+            from_date=from_date,
+            to_date=to_date,
+            starred=_parse_starred(starred),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     _emit_rows(rows, output_format=output_format, default_text=_format_message_headers_text)
 
 

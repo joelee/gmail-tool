@@ -35,6 +35,30 @@ class Application:
     def read_message(self, message_id: str) -> GmailMessage:
         return self.gateway.get_message(message_id)
 
+    def search_messages(
+        self,
+        *,
+        action: str,
+        query: str,
+        limit: int | None,
+        from_date: str | None,
+        to_date: str | None,
+        starred: bool | None,
+    ) -> list[str] | list[GmailMessageHeader]:
+        filters = MessageFilters(
+            from_date=parse_date(from_date),
+            to_date=parse_date(to_date),
+            starred=starred,
+        )
+        effective_limit = limit or self.settings.app.default_limit
+        return self.action_registry.run_for_search(
+            action,
+            self.gateway,
+            raw_query=query,
+            filters=filters,
+            limit=effective_limit,
+        )
+
     def run_label_action(
         self,
         *,
@@ -51,7 +75,27 @@ class Application:
             starred=starred,
         )
         effective_limit = limit or self.settings.app.default_limit
-        return self.action_registry.run(action, self.gateway, label, filters, limit=effective_limit)
+        resolved_label = self._resolve_label_id(label)
+        return self.action_registry.run(
+            action,
+            self.gateway,
+            resolved_label,
+            filters,
+            limit=effective_limit,
+        )
+
+    def _resolve_label_id(self, label: str) -> str:
+        labels = self.gateway.list_labels()
+
+        for known_label in labels:
+            if known_label.id == label:
+                return known_label.id
+
+        for known_label in labels:
+            if known_label.name == label:
+                return known_label.id
+
+        raise ValueError(f"Unknown label: {label}")
 
 
 def build_application(settings: Settings) -> Application:
