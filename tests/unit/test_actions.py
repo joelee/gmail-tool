@@ -1,6 +1,8 @@
+from pathlib import Path
+
 from gmail_tool.actions import build_action_registry
 from gmail_tool.filters import MessageFilters
-from gmail_tool.gmail import GmailLabel, GmailMessageHeader
+from gmail_tool.gmail import GmailLabel, GmailMessageHeader, GmailRawMessage
 
 
 class FakeGateway:
@@ -10,6 +12,8 @@ class FakeGateway:
         self.search_list_calls: list[tuple[str | None, int]] = []
         self.ensure_label_calls: list[str] = []
         self.modify_calls: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
+        self.raw_message_calls: list[str] = []
+        self.raw_messages: dict[str, GmailRawMessage] = {}
 
     def count_messages(self, label: str, query: str | None) -> int:
         self.count_calls.append((label, query))
@@ -65,6 +69,31 @@ class FakeGateway:
     def list_labels(self) -> list[GmailLabel]:
         return [GmailLabel(id="LBL_EXISTING", name="Existing")]
 
+    def get_raw_message(self, message_id: str) -> GmailRawMessage:
+        self.raw_message_calls.append(message_id)
+        return self.raw_messages[message_id]
+
+
+def build_raw_message(
+    message_id: str,
+    *,
+    date_header: str | None,
+    internal_date: int,
+) -> GmailRawMessage:
+    header_lines = [
+        "From: Sender Example <from@example.com>",
+        "To: to@example.com",
+        "Subject: Subject",
+    ]
+    if date_header is not None:
+        header_lines.append(f"Date: {date_header}")
+    raw_bytes = ("\r\n".join(header_lines) + "\r\n\r\nBody").encode("utf-8")
+    return GmailRawMessage(
+        message_id=message_id,
+        raw_bytes=raw_bytes,
+        internal_date=internal_date,
+    )
+
 
 def test_count_action_uses_gateway_query() -> None:
     gateway = FakeGateway()
@@ -118,12 +147,12 @@ def test_search_list_action_uses_search_gateway_path() -> None:
     assert gateway.search_list_calls == [("from:bob@example.com is:starred", 3)]
 
 
-def test_add_label_action_adds_label_to_matching_search_messages() -> None:
+def test_label_add_action_adds_label_to_matching_search_messages() -> None:
     gateway = FakeGateway()
     registry = build_action_registry()
 
     result = registry.run_for_search(
-        "add-label:FollowUp",
+        "label-add:FollowUp",
         gateway,
         raw_query="from:bob@example.com",
         filters=MessageFilters(),
@@ -138,12 +167,12 @@ def test_add_label_action_adds_label_to_matching_search_messages() -> None:
     ]
 
 
-def test_remove_label_action_removes_label_from_matching_label_messages() -> None:
+def test_label_remove_action_removes_label_from_matching_label_messages() -> None:
     gateway = FakeGateway()
     registry = build_action_registry()
 
     result = registry.run(
-        "remove-label:Existing",
+        "label-remove:Existing",
         gateway,
         "INBOX",
         MessageFilters(starred=False),
@@ -154,4 +183,225 @@ def test_remove_label_action_removes_label_from_matching_label_messages() -> Non
     assert gateway.modify_calls == [
         ("label-1", (), ("LBL_EXISTING",)),
         ("label-2", (), ("LBL_EXISTING",)),
+    ]
+
+
+def test_action_registry_lists_names_with_descriptions() -> None:
+    registry = build_action_registry()
+
+    assert registry.list_actions() == [
+        ("backup", "Back up matching messages as .eml files."),
+        ("count", "Print the number of matching messages."),
+        ("label-add:<label_name>", "Add a label to all matching messages."),
+        ("label-remove:<label_name>", "Remove a label from all matching messages."),
+        ("list", "List matching message headers."),
+    ]
+
+
+def test_backup_action_writes_eml_files_to_default_backup_path(tmp_path: Path) -> None:
+    gateway = FakeGateway()
+    gateway.raw_messages = {
+        "search-1": build_raw_message(
+            "search-1",
+            date_header="Tue, 02 Jan 2024 10:00:00 +0000",
+            internal_date=1704189600000,
+        ),
+        "search-2": build_raw_message(
+            "search-2",
+            date_header="Wed, 03 Jan 2024 11:00:00 +0000",
+            internal_date=1704279600000,
+        ),
+    }
+    backup_root = tmp_path / "backups"
+    registry = build_action_registry(default_backup_path=backup_root)
+
+    result = registry.run_for_search(
+        "backup",
+        gateway,
+        raw_query="from:bob@example.com",
+        filters=MessageFilters(),
+        limit=1,
+    )
+
+    expected_root = backup_root.resolve()
+    expected_file = expected_root / "2024" / "01-02" / "20240102-100000-search-1.eml"
+    assert result == [f"1 messages written to {expected_root} (0 skipped)"]
+    assert expected_file.read_bytes() == gateway.raw_messages["search-1"].raw_bytes
+    assert gateway.raw_message_calls == ["search-1"]
+
+
+def test_backup_action_uses_backup_path_override(tmp_path: Path) -> None:
+    gateway = FakeGateway()
+    gateway.raw_messages = {
+        "search-1": build_raw_message(
+            "search-1",
+            date_header="Tue, 02 Jan 2024 10:00:00 +0000",
+            internal_date=1704189600000,
+        ),
+        "search-2": build_raw_message(
+            "search-2",
+            date_header="Wed, 03 Jan 2024 11:00:00 +0000",
+            internal_date=1704279600000,
+        ),
+    }
+    registry = build_action_registry(default_backup_path=tmp_path / "default-backups")
+    override_root = tmp_path / "override-backups"
+
+    result = registry.run_for_search(
+        "backup",
+        gateway,
+        raw_query="from:bob@example.com",
+        filters=MessageFilters(),
+        limit=1,
+        backup_path=override_root,
+    )
+
+    expected_root = override_root.resolve()
+    expected_file = expected_root / "2024" / "01-02" / "20240102-100000-search-1.eml"
+    assert result == [f"1 messages written to {expected_root} (0 skipped)"]
+    assert expected_file.exists()
+    assert not (tmp_path / "default-backups").exists()
+
+
+def test_backup_action_resumes_by_skipping_existing_message_ids(tmp_path: Path) -> None:
+    gateway = FakeGateway()
+    gateway.raw_messages = {
+        "search-1": build_raw_message(
+            "search-1",
+            date_header="Tue, 02 Jan 2024 10:00:00 +0000",
+            internal_date=1704189600000,
+        ),
+        "search-2": build_raw_message(
+            "search-2",
+            date_header="Wed, 03 Jan 2024 11:00:00 +0000",
+            internal_date=1704279600000,
+        ),
+    }
+    backup_root = tmp_path / "backups"
+    existing_file = backup_root / "2024" / "01-02" / "20240102-100000-search-1.eml"
+    existing_file.parent.mkdir(parents=True)
+    existing_file.write_bytes(b"existing")
+    registry = build_action_registry(default_backup_path=backup_root)
+
+    result = registry.run_for_search(
+        "backup",
+        gateway,
+        raw_query="from:bob@example.com",
+        filters=MessageFilters(),
+        limit=10,
+    )
+
+    expected_root = backup_root.resolve()
+    expected_file = expected_root / "2024" / "01-03" / "20240103-110000-search-2.eml"
+    assert result == [f"1 messages written to {expected_root} (1 skipped)"]
+    assert existing_file.read_bytes() == b"existing"
+    assert expected_file.exists()
+    assert gateway.raw_message_calls == ["search-2"]
+
+
+def test_backup_action_falls_back_to_internal_date_when_date_header_missing(tmp_path: Path) -> None:
+    gateway = FakeGateway()
+    gateway.raw_messages = {
+        "search-1": build_raw_message(
+            "search-1",
+            date_header=None,
+            internal_date=1704189600000,
+        ),
+        "search-2": build_raw_message(
+            "search-2",
+            date_header="Wed, 03 Jan 2024 11:00:00 +0000",
+            internal_date=1704279600000,
+        ),
+    }
+    backup_root = tmp_path / "backups"
+    registry = build_action_registry(default_backup_path=backup_root)
+
+    registry.run_for_search(
+        "backup",
+        gateway,
+        raw_query="from:bob@example.com",
+        filters=MessageFilters(),
+        limit=1,
+    )
+
+    expected_file = backup_root.resolve() / "2024" / "01-02" / "20240102-100000-search-1.eml"
+    assert expected_file.exists()
+
+
+def test_backup_action_reports_progress_for_written_and_skipped_messages(tmp_path: Path) -> None:
+    gateway = FakeGateway()
+    gateway.raw_messages = {
+        "search-1": build_raw_message(
+            "search-1",
+            date_header="Tue, 02 Jan 2024 10:00:00 +0000",
+            internal_date=1704189600000,
+        ),
+        "search-2": build_raw_message(
+            "search-2",
+            date_header="Wed, 03 Jan 2024 11:00:00 +0000",
+            internal_date=1704279600000,
+        ),
+    }
+    backup_root = tmp_path / "backups"
+    existing_file = backup_root / "2024" / "01-02" / "20240102-100000-search-1.eml"
+    existing_file.parent.mkdir(parents=True)
+    existing_file.write_bytes(b"existing")
+    registry = build_action_registry(default_backup_path=backup_root)
+    progress_messages: list[str | None] = []
+
+    registry.run_for_search(
+        "backup",
+        gateway,
+        raw_query="from:bob@example.com",
+        filters=MessageFilters(),
+        limit=10,
+        progress_callback=progress_messages.append,
+    )
+
+    assert progress_messages == [
+        "Skipping 1/2: message_id=search-1 already backed up",
+        "Backing up 2/2: 2024-01-03 11:00:00 | search-2 | from@example.com | Subject",
+        None,
+    ]
+
+
+def test_backup_action_decodes_subject_for_progress(tmp_path: Path) -> None:
+    gateway = FakeGateway()
+    gateway.raw_messages = {
+        "search-1": GmailRawMessage(
+            message_id="search-1",
+            raw_bytes=(
+                b"From: Sender Example <from@example.com>\r\n"
+                b"To: to@example.com\r\n"
+                b"Subject: =?utf-8?Q?Weekly=20Update=3A=20Alpha=204.7.2=20&=20Roadmap?=\r\n"
+                b"Date: Tue, 02 Jan 2024 10:00:00 +0000\r\n\r\n"
+                b"Body"
+            ),
+            internal_date=1704189600000,
+        ),
+        "search-2": build_raw_message(
+            "search-2",
+            date_header="Wed, 03 Jan 2024 11:00:00 +0000",
+            internal_date=1704279600000,
+        ),
+    }
+    backup_root = tmp_path / "backups"
+    registry = build_action_registry(default_backup_path=backup_root)
+    progress_messages: list[str | None] = []
+
+    registry.run_for_search(
+        "backup",
+        gateway,
+        raw_query="from:bob@example.com",
+        filters=MessageFilters(),
+        limit=1,
+        progress_callback=progress_messages.append,
+    )
+
+    assert progress_messages == [
+        (
+            "Backing up 1/1: 2024-01-02 10:00:00 | search-1 | from@example.com | "
+            "Weekly Update: Alpha 4.7.2 & Roadmap"
+        ),
+        None,
     ]

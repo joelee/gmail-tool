@@ -1,15 +1,17 @@
 import csv
 import io
 import json
+import shutil
 from pathlib import Path
 
 from typer.testing import CliRunner
 
-from gmail_tool.cli import app
+from gmail_tool.cli import _build_backup_progress_reporter, app
 from gmail_tool.config import (
     AppSettings,
     AuthMode,
     AuthSettings,
+    BackupSettings,
     GmailSettings,
     OAuthSettings,
     SearchSettings,
@@ -53,6 +55,8 @@ class FakeApplication:
         from_date,
         to_date,
         starred,
+        backup_path=None,
+        progress_callback=None,
     ):
         self.last_call = {
             "action": action,
@@ -62,6 +66,8 @@ class FakeApplication:
             "to_date": to_date,
             "starred": starred,
         }
+        if backup_path is not None:
+            self.last_call["backup_path"] = backup_path
         if action == "list":
             return [
                 GmailMessageHeader(
@@ -72,6 +78,14 @@ class FakeApplication:
                     subject="Search Result",
                 )
             ]
+        if action == "backup":
+            if progress_callback is not None:
+                progress_callback(
+                    "Backing up 1/1: 2024-01-01 10:00:00 | "
+                    "search-1 | from@example.com | Search Result"
+                )
+                progress_callback(None)
+            return ["1 messages written to /tmp/backups (0 skipped)"]
         return ["2 messages updated"]
 
     def run_label_action(
@@ -83,6 +97,8 @@ class FakeApplication:
         from_date,
         to_date,
         starred,
+        backup_path=None,
+        progress_callback=None,
     ):
         self.last_call = {
             "label": label,
@@ -92,6 +108,8 @@ class FakeApplication:
             "to_date": to_date,
             "starred": starred,
         }
+        if backup_path is not None:
+            self.last_call["backup_path"] = backup_path
         if action == "list":
             return [
                 GmailMessageHeader(
@@ -109,6 +127,13 @@ class FakeApplication:
                     subject="World",
                 ),
             ]
+        if action == "backup":
+            if progress_callback is not None:
+                progress_callback(
+                    "Backing up 1/1: 2024-01-01 10:00:00 | abc123 | from@example.com | Hello"
+                )
+                progress_callback(None)
+            return ["1 messages written to /tmp/backups (0 skipped)"]
         return ["line-1", "line-2"]
 
 
@@ -130,6 +155,7 @@ def build_settings() -> Settings:
                 subject="user@example.com",
             ),
         ),
+        backup=BackupSettings(path=None),
         gmail=GmailSettings(user_id="me"),
     )
 
@@ -498,6 +524,57 @@ def test_search_action_option_passes_count_action(monkeypatch) -> None:
     }
 
 
+def test_search_backup_action_passes_backup_path(monkeypatch) -> None:
+    fake_app = FakeApplication()
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+    monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "search",
+            "from:bob@example.com",
+            "--action",
+            "backup",
+            "--backup-path",
+            "/tmp/backups",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert fake_app.last_call == {
+        "action": "backup",
+        "query": "from:bob@example.com",
+        "limit": None,
+        "from_date": None,
+        "to_date": None,
+        "starred": None,
+        "backup_path": Path("/tmp/backups"),
+    }
+    assert "\rBacking up 1/1: 2024-01-01 10:00:00 | search-1 | from@example.com |" in result.stderr
+
+
+def test_search_backup_path_rejects_non_backup_action(monkeypatch) -> None:
+    fake_app = FakeApplication()
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+    monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "search",
+            "from:bob@example.com",
+            "--action",
+            "count",
+            "--backup-path",
+            "/tmp/backups",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--backup-path is only supported for the backup action" in result.stderr
+
+
 def test_search_action_rejects_structured_format_for_non_list(monkeypatch) -> None:
     fake_app = FakeApplication()
     monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
@@ -530,7 +607,7 @@ def test_search_add_label_action_outputs_update_count(monkeypatch) -> None:
 
     result = CliRunner().invoke(
         app,
-        ["search", "from:bob@example.com", "--action", "add-label:FollowUp"],
+        ["search", "from:bob@example.com", "--action", "label-add:FollowUp"],
     )
 
     assert result.exit_code == 0
@@ -548,6 +625,21 @@ def test_search_command_rejects_unknown_saved_query(monkeypatch) -> None:
     assert "Unknown saved query: missing" in result.stderr
 
 
+def test_search_list_actions_outputs_supported_actions(monkeypatch) -> None:
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+
+    result = CliRunner().invoke(app, ["search", "--list-actions"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "backup                     Back up matching messages as .eml files.",
+        "count                      Print the number of matching messages.",
+        "label-add:<label_name>     Add a label to all matching messages.",
+        "label-remove:<label_name>  Remove a label from all matching messages.",
+        "list                       List matching message headers.",
+    ]
+
+
 def test_label_list_actions_outputs_supported_actions(monkeypatch) -> None:
     monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
 
@@ -555,11 +647,87 @@ def test_label_list_actions_outputs_supported_actions(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert result.stdout.splitlines() == [
-        "add-label:<label_name>",
-        "count",
-        "list",
-        "remove-label:<label_name>",
+        "backup                     Back up matching messages as .eml files.",
+        "count                      Print the number of matching messages.",
+        "label-add:<label_name>     Add a label to all matching messages.",
+        "label-remove:<label_name>  Remove a label from all matching messages.",
+        "list                       List matching message headers.",
     ]
+
+
+def test_label_backup_action_passes_backup_path(monkeypatch) -> None:
+    fake_app = FakeApplication()
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+    monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "label",
+            "INBOX",
+            "--action",
+            "backup",
+            "--backup-path",
+            "/tmp/backups",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert fake_app.last_call == {
+        "label": "INBOX",
+        "action": "backup",
+        "limit": None,
+        "from_date": None,
+        "to_date": None,
+        "starred": None,
+        "backup_path": Path("/tmp/backups"),
+    }
+    assert "\rBacking up 1/1: 2024-01-01 10:00:00 | abc123 | from@example.com | Hello" in (
+        result.stderr
+    )
+
+
+def test_backup_progress_truncates_to_terminal_width(monkeypatch) -> None:
+    reporter = _build_backup_progress_reporter()
+    messages: list[tuple[str, bool, bool]] = []
+
+    monkeypatch.setattr(
+        "gmail_tool.cli.typer.echo",
+        lambda text, err=False, nl=True: messages.append((text, err, nl)),
+    )
+    monkeypatch.setattr(
+        "gmail_tool.cli.shutil.get_terminal_size",
+        lambda fallback=(80, 24): shutil.os.terminal_size((20, 24)),
+    )
+
+    reporter("Backing up 1/1: message_id=search-1 | subject=A very long subject")
+    reporter(None)
+
+    assert messages == [
+        ("\rBacking up 1/1: mess", True, False),
+        ("", True, True),
+    ]
+
+
+def test_label_backup_path_rejects_non_backup_action(monkeypatch) -> None:
+    fake_app = FakeApplication()
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+    monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "label",
+            "INBOX",
+            "--action",
+            "count",
+            "--backup-path",
+            "/tmp/backups",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--backup-path is only supported for the backup action" in result.stderr
 
 
 def test_label_list_action_outputs_json(monkeypatch) -> None:
@@ -641,7 +809,18 @@ def test_label_count_action_rejects_structured_format(monkeypatch) -> None:
 def test_label_action_reports_unknown_label_cleanly(monkeypatch) -> None:
     fake_app = FakeApplication()
 
-    def raise_unknown_label(*, label: str, action: str, limit, from_date, to_date, starred):
+    def raise_unknown_label(
+        *,
+        label: str,
+        action: str,
+        limit,
+        from_date,
+        to_date,
+        starred,
+        backup_path=None,
+        progress_callback=None,
+    ):
+        del action, limit, from_date, to_date, starred, backup_path, progress_callback
         raise ValueError(f"Unknown label: {label}")
 
     fake_app.run_label_action = raise_unknown_label

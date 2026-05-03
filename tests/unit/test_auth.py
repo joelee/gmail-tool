@@ -7,6 +7,7 @@ from gmail_tool.config import (
     AppSettings,
     AuthMode,
     AuthSettings,
+    BackupSettings,
     GmailSettings,
     OAuthSettings,
     SearchSettings,
@@ -28,6 +29,7 @@ def test_build_credentials_provider_for_oauth() -> None:
                 subject="user@example.com",
             ),
         ),
+        backup=BackupSettings(path=None),
         gmail=GmailSettings(user_id="me"),
     )
 
@@ -49,6 +51,7 @@ def test_build_credentials_provider_for_service_account() -> None:
                 subject="user@example.com",
             ),
         ),
+        backup=BackupSettings(path=None),
         gmail=GmailSettings(user_id="me"),
     )
 

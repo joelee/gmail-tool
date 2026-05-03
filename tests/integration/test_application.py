@@ -1,16 +1,19 @@
+from pathlib import Path
+
 from gmail_tool.actions import build_action_registry
 from gmail_tool.app import Application
 from gmail_tool.config import (
     AppSettings,
     AuthMode,
     AuthSettings,
+    BackupSettings,
     GmailSettings,
     OAuthSettings,
     SearchSettings,
     ServiceAccountSettings,
     Settings,
 )
-from gmail_tool.gmail import GmailLabel, GmailMessage, GmailMessageHeader
+from gmail_tool.gmail import GmailLabel, GmailMessage, GmailMessageHeader, GmailRawMessage
 
 
 class FakeGateway:
@@ -26,6 +29,7 @@ class FakeGateway:
         self.list_calls: list[tuple[str, str | None, int]] = []
         self.search_calls: list[tuple[str, int]] = []
         self.modify_calls: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
+        self.raw_message_calls: list[str] = []
 
     def count_messages(self, label: str, query: str | None) -> int:
         self.count_calls.append((label, query))
@@ -86,8 +90,20 @@ class FakeGateway:
     ) -> None:
         self.modify_calls.append((message_id, tuple(add_label_ids), tuple(remove_label_ids)))
 
+    def get_raw_message(self, message_id: str) -> GmailRawMessage:
+        self.raw_message_calls.append(message_id)
+        return GmailRawMessage(
+            message_id=message_id,
+            raw_bytes=b"From: from@example.com\r\n"
+            b"To: to@example.com\r\n"
+            b"Subject: Search Result\r\n"
+            b"Date: Wed, 03 Jan 2024 10:00:00 +0000\r\n\r\n"
+            b"Body",
+            internal_date=1704276000000,
+        )
 
-def build_settings() -> Settings:
+
+def build_settings(backup_path: Path | None = None) -> Settings:
     return Settings(
         app=AppSettings(default_limit=100),
         search=SearchSettings(saved_queries={}),
@@ -100,6 +116,7 @@ def build_settings() -> Settings:
                 subject="user@example.com",
             ),
         ),
+        backup=BackupSettings(path=backup_path),
         gmail=GmailSettings(user_id="me"),
     )
 
@@ -318,7 +335,7 @@ def test_application_searches_with_add_label_action() -> None:
 
     lines = app.search_messages(
         query="from:bob@example.com",
-        action="add-label:FollowUp",
+        action="label-add:FollowUp",
         limit=None,
         from_date=None,
         to_date=None,
@@ -330,3 +347,29 @@ def test_application_searches_with_add_label_action() -> None:
         ("search-1", ("id:FollowUp",), ()),
         ("search-2", ("id:FollowUp",), ()),
     ]
+
+
+def test_application_searches_with_backup_action(tmp_path: Path) -> None:
+    gateway = FakeGateway()
+    backup_root = tmp_path / "backups"
+    app = Application(
+        settings=build_settings(backup_path=backup_root),
+        gateway=gateway,
+        action_registry=build_action_registry(default_backup_path=backup_root),
+    )
+
+    lines = app.search_messages(
+        query="from:bob@example.com",
+        action="backup",
+        limit=1,
+        from_date=None,
+        to_date=None,
+        starred=None,
+        backup_path=None,
+    )
+
+    expected_root = backup_root.resolve()
+    expected_file = expected_root / "2024" / "01-03" / "20240103-100000-search-1.eml"
+    assert lines == [f"1 messages written to {expected_root} (0 skipped)"]
+    assert expected_file.exists()
+    assert gateway.raw_message_calls == ["search-1"]

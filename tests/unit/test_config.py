@@ -24,6 +24,54 @@ scopes = ["scope-a"]
 client_secret_env = "OAUTH_SECRET"
 token_file_env = "OAUTH_TOKEN"
 
+        [auth.service_account]
+        service_account_file_env = "SERVICE_ACCOUNT_FILE"
+        subject_env = "SERVICE_ACCOUNT_SUBJECT"
+
+        [backup]
+        path = "exports"
+
+        [gmail]
+        user_id_env = "GMAIL_USER"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("OAUTH_SECRET", "/tmp/oauth-secret.json")
+    monkeypatch.setenv("OAUTH_TOKEN", "/tmp/oauth-token.json")
+    monkeypatch.setenv("SERVICE_ACCOUNT_FILE", "/tmp/service-account.json")
+    monkeypatch.setenv("SERVICE_ACCOUNT_SUBJECT", "user@example.com")
+    monkeypatch.setenv("GMAIL_USER", "me")
+
+    settings = load_settings(config_path)
+
+    assert settings.app.default_limit == 9
+    assert settings.auth.mode is AuthMode.SERVICE_ACCOUNT
+    assert settings.auth.oauth.client_secret_file == "/tmp/oauth-secret.json"
+    assert settings.auth.service_account.subject == "user@example.com"
+    assert settings.gmail.user_id == "me"
+    assert settings.backup.path == config_path.parent / "exports"
+    assert settings.search.saved_queries == {
+        "recent_attachments": "has:attachment newer_than:30d",
+        "ring": "from:no-reply@rs.ring.com newer_than:7d",
+    }
+
+
+def test_load_settings_uses_none_backup_path_when_missing(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[app]
+default_limit = 9
+
+[auth]
+mode = "service_account"
+scopes = ["scope-a"]
+
+[auth.oauth]
+client_secret_env = "OAUTH_SECRET"
+token_file_env = "OAUTH_TOKEN"
+
 [auth.service_account]
 service_account_file_env = "SERVICE_ACCOUNT_FILE"
 subject_env = "SERVICE_ACCOUNT_SUBJECT"
@@ -42,15 +90,7 @@ user_id_env = "GMAIL_USER"
 
     settings = load_settings(config_path)
 
-    assert settings.app.default_limit == 9
-    assert settings.auth.mode is AuthMode.SERVICE_ACCOUNT
-    assert settings.auth.oauth.client_secret_file == "/tmp/oauth-secret.json"
-    assert settings.auth.service_account.subject == "user@example.com"
-    assert settings.gmail.user_id == "me"
-    assert settings.search.saved_queries == {
-        "recent_attachments": "has:attachment newer_than:30d",
-        "ring": "from:no-reply@rs.ring.com newer_than:7d",
-    }
+    assert settings.backup.path is None
 
 
 def test_discover_config_path_prefers_explicit_argument(monkeypatch, tmp_path: Path) -> None:

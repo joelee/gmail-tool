@@ -12,9 +12,19 @@ This repository contains a `uv` managed Python CLI for Gmail label exploration a
 - Document feature planning in `docs/plan/*.md` before or alongside implementation.
 - Maintain future tasks in `docs/plan/backlog.md`.
 - Create new feature plans as timestamped files in `docs/plan/{timestamp}-{feature_name}.md`.
-- Move completed and implemented feature plans to `docs/plan/done/{timestamp}-{feature_name}.md`.
-- Maintain `CHANGELOG.md` for user-visible changes.
+- Move completed and implemented feature plans to `docs/plan/done/{timestamp}-{feature_name}.md` immediately after the work is finished.
+- Do not leave completed plan files in `docs/plan/`; only active work and `backlog.md` should remain there.
+- When the repository is under git, use `git mv` to move completed plan files into `docs/plan/done/`.
+- Record every new user-visible change under the `CHANGELOG.md` `Unreleased` section.
 - Keep test coverage above 60%.
+
+## Release Workflow
+
+- When asked to prepare a release, bump the package version in `pyproject.toml`.
+- Roll the current `CHANGELOG.md` `Unreleased` entries into a versioned release section.
+- Create release notes in `docs/release/vX.Y.Z.md`.
+- Keep release notes focused on shipped changes, upgrade notes, and verification.
+- If a `docs/release/` directory does not exist yet, create it as part of release preparation.
 
 ## Project Layout
 

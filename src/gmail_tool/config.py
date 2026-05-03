@@ -50,10 +50,16 @@ class GmailSettings:
 
 
 @dataclass(frozen=True)
+class BackupSettings:
+    path: Path | None
+
+
+@dataclass(frozen=True)
 class Settings:
     app: AppSettings
     search: SearchSettings
     auth: AuthSettings
+    backup: BackupSettings
     gmail: GmailSettings
 
 
@@ -65,6 +71,7 @@ def load_settings(config_path: Path | None = None) -> Settings:
     app_data = data["app"]
     search_data = data.get("search", {})
     auth_data = data["auth"]
+    backup_data = data.get("backup", {})
     gmail_data = data["gmail"]
 
     oauth_data = auth_data["oauth"]
@@ -85,6 +92,7 @@ def load_settings(config_path: Path | None = None) -> Settings:
                 subject=_read_env(service_account_data["subject_env"], required=False),
             ),
         ),
+        backup=BackupSettings(path=_resolve_backup_path(backup_data.get("path"), resolved_path)),
         gmail=GmailSettings(user_id=_read_env(gmail_data["user_id_env"])),
     )
 
@@ -129,3 +137,13 @@ def _read_env(name: str, *, required: bool = True) -> str | None:
     if required:
         raise ValueError(f"Missing required environment variable: {name}")
     return None
+
+
+def _resolve_backup_path(path_value: str | None, config_path: Path) -> Path | None:
+    if path_value is None:
+        return None
+
+    path = Path(path_value)
+    if path.is_absolute():
+        return path
+    return (config_path.parent / path).resolve()

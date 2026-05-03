@@ -10,6 +10,7 @@ uv run gmail-tool labels -f json
 uv run gmail-tool auth-check
 uv run gmail-tool read <MESSAGE_ID>
 uv run gmail-tool search <QUERY_PARTS...>
+uv run gmail-tool search --list-actions
 uv run gmail-tool search --list-query-examples
 uv run gmail-tool search --cheat-sheet
 uv run gmail-tool search --saved-query <NAME>
@@ -88,13 +89,16 @@ Supported options:
 - `--to-date YYYY-MM-DD`
 - `--starred true|false`
 - `--saved-query <NAME>`
+- `--backup-path <DIR>` for `backup`
+- `--list-actions`
 - `--list-query-examples`
 - `--cheat-sheet`
 
 Mutation actions:
 
-- `add-label:<label_name>`
-- `remove-label:<label_name>`
+- `backup`
+- `label-add:<label_name>`
+- `label-remove:<label_name>`
 
 Examples:
 
@@ -105,8 +109,10 @@ uv run gmail-tool search subject:invoice --starred true -l 20
 uv run gmail-tool search --saved-query recent_attachments
 uv run gmail-tool search --saved-query ring_recent has:drive
 uv run gmail-tool search -a count from:bob@example.com
-uv run gmail-tool search -a add-label:FollowUp from:bob@example.com
-uv run gmail-tool search -a remove-label:Existing from:bob@example.com
+uv run gmail-tool search -a backup from:bob@example.com
+uv run gmail-tool search -a backup --backup-path /tmp/gmail-backups from:bob@example.com
+uv run gmail-tool search -a label-add:FollowUp from:bob@example.com
+uv run gmail-tool search -a label-remove:Existing from:bob@example.com
 ```
 
 Built-in query examples:
@@ -127,15 +133,17 @@ The same content is also available in `docs/search-cheat-sheet.md`.
 
 ```bash
 uv run gmail-tool label --list-actions
+uv run gmail-tool search --list-actions
 ```
 
 Current actions:
 
 ```text
-add-label:<label_name>
-count
-list
-remove-label:<label_name>
+backup                     Back up matching messages as .eml files.
+count                      Print the number of matching messages.
+label-add:<label_name>     Add a label to all matching messages.
+label-remove:<label_name>  Remove a label from all matching messages.
+list                       List matching message headers.
 ```
 
 ### Run A Label Action
@@ -149,6 +157,7 @@ uv run gmail-tool label <LABEL> [OPTIONS]
 Supported options:
 
 - `--action <NAME>` or `-a <NAME>`. Defaults to `list`.
+- `--backup-path <DIR>` for `backup`
 - `--limit <N>` or `-l <N>` for actions that return message rows. If omitted, the default is `100`.
 - `--from-date YYYY-MM-DD`
 - `--to-date YYYY-MM-DD`
@@ -172,6 +181,13 @@ Count all messages in `INBOX`:
 uv run gmail-tool label INBOX -a count
 ```
 
+Back up matching messages in `INBOX`:
+
+```bash
+uv run gmail-tool label INBOX -a backup
+uv run gmail-tool label INBOX -a backup --backup-path /tmp/gmail-backups
+```
+
 Count starred messages in `IMPORTANT` since a date:
 
 ```bash
@@ -181,13 +197,13 @@ uv run gmail-tool label IMPORTANT -a count --from-date 2026-01-01 --starred true
 Add a label to all matching messages in `INBOX`:
 
 ```bash
-uv run gmail-tool label INBOX -a add-label:FollowUp
+uv run gmail-tool label INBOX -a label-add:FollowUp
 ```
 
 Remove a label from all matching messages in `INBOX`:
 
 ```bash
-uv run gmail-tool label INBOX -a remove-label:Existing
+uv run gmail-tool label INBOX -a label-remove:Existing
 ```
 
 List the latest five message headers in `INBOX`:
@@ -243,10 +259,12 @@ uv run gmail-tool label JW/Receipts --from-date 2026-01-01 --to-date 2026-01-31 
 - Dates are interpreted as Gmail search date filters.
 - `--to-date` is compiled as an exclusive upper bound on the next day.
 - `--config <path>` or `-c <path>` overrides config discovery for any command.
-- `--list-actions` does not require Gmail authentication because it reads from the local action registry.
+- `--list-actions` works on both `label` and `search` and does not require Gmail authentication because it reads from the local action registry.
 - `--format json|csv` is supported for `labels` and `label <LABEL> list`.
 - `label <LABEL> list` includes a `message_id` field in text, JSON, and CSV output.
 - `label <LABEL>` accepts an exact Gmail label name or an exact Gmail label ID.
+- `backup` writes `.eml` files to `YYYY/MM-DD/YYYYMMDD-HHmmss-<message_id>.eml` under the configured backup root.
+- `backup` skips already backed-up `message_id` values so interrupted runs can resume efficiently.
 - `search` accepts raw Gmail query arguments and supports the same `--limit`, `--format`, and global filters as message listing.
 - `search --list-query-examples` prints built-in Gmail query examples without accessing Gmail.
 - `search --cheat-sheet` prints a quick Gmail operator reference without accessing Gmail.

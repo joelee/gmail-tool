@@ -89,7 +89,7 @@ uv run gmail-tool search -a count from:bob@example.com
 Add a label to all search matches:
 
 ```bash
-uv run gmail-tool search -a add-label:FollowUp from:bob@example.com
+uv run gmail-tool search -a label-add:FollowUp from:bob@example.com
 ```
 
 List built-in search examples:
@@ -108,6 +108,13 @@ Run a saved query from `config.toml`:
 
 ```bash
 uv run gmail-tool search --saved-query recent_attachments
+```
+
+Back up matching messages as `.eml` files:
+
+```bash
+uv run gmail-tool search -a backup from:bob@example.com
+uv run gmail-tool search -a backup --backup-path /tmp/gmail-backups from:bob@example.com
 ```
 
 6. Count messages in a label:
@@ -134,7 +141,7 @@ Plain-text list output includes `message_id` values that can be passed to `read`
 
 The `search` command returns the same message list structure as `label ... list`.
 
-Both `label` and `search` default to the `list` action. Use `--action` or `-a` to switch to `count`, `add-label:<name>`, or `remove-label:<name>`.
+Both `label` and `search` default to the `list` action. Use `--action` or `-a` to switch to `count`, `backup`, `label-add:<name>`, or `label-remove:<name>`.
 
 The `label` command defaults to the `list` action. Use `--action count` or `-a count` to switch actions.
 
@@ -142,6 +149,7 @@ The `label` command defaults to the `list` action. Use `--action count` or `-a c
 
 ```bash
 uv run gmail-tool label --list-actions
+uv run gmail-tool search --list-actions
 ```
 
 ## Configuration

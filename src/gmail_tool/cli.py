@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import shutil
 from dataclasses import asdict, is_dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -146,6 +147,42 @@ def _load_settings_with_debug(config: Path | None) -> Settings:
     return load_settings(config)
 
 
+def _exit_with_error(message: str) -> None:
+    typer.echo(message, err=True)
+    raise typer.Exit(code=2)
+
+
+def _emit_action_list() -> None:
+    actions = build_action_registry().list_actions()
+    width = max(len(action_name) for action_name, _ in actions)
+    for action_name, description in actions:
+        typer.echo(f"{action_name.ljust(width)}  {description}")
+
+
+def _build_backup_progress_reporter():
+    previous_width = 0
+
+    def report(message: str | None) -> None:
+        nonlocal previous_width
+        if message is None:
+            if previous_width > 0:
+                typer.echo("", err=True)
+                previous_width = 0
+            return
+
+        columns = max(shutil.get_terminal_size(fallback=(80, 24)).columns - 1, 20)
+        visible_message = message[:columns]
+        previous_width = max(previous_width, len(visible_message))
+        typer.echo(f"\r{visible_message.ljust(previous_width)}", err=True, nl=False)
+
+    return report
+
+
+def _validate_backup_path(action: str, backup_path: Path | None) -> None:
+    if backup_path is not None and action != "backup":
+        _exit_with_error("--backup-path is only supported for the backup action")
+
+
 @app.callback(invoke_without_command=True)
 def main_callback(
     version_option: Annotated[
@@ -214,15 +251,24 @@ def search_messages(
     ] = None,
     action: Annotated[str, typer.Option("--action", "-a")] = "list",
     saved_query: Annotated[str | None, typer.Option("--saved-query")] = None,
+    list_actions: Annotated[bool, typer.Option("--list-actions")] = False,
     list_query_examples: Annotated[bool, typer.Option("--list-query-examples")] = False,
     cheat_sheet: Annotated[bool, typer.Option("--cheat-sheet")] = False,
     output_format: Annotated[str | None, typer.Option("--format", "-f")] = None,
+    backup_path: Annotated[
+        Path | None,
+        typer.Option("--backup-path", dir_okay=True, file_okay=False),
+    ] = None,
     limit: Annotated[int | None, typer.Option("--limit", "-l", min=1)] = None,
     from_date: Annotated[str | None, typer.Option("--from-date")] = None,
     to_date: Annotated[str | None, typer.Option("--to-date")] = None,
     starred: Annotated[str | None, typer.Option("--starred")] = None,
 ) -> None:
     settings = _load_settings_with_debug(config)
+
+    if list_actions:
+        _emit_action_list()
+        return
 
     if cheat_sheet:
         typer.echo(SEARCH_CHEAT_SHEET)
@@ -234,11 +280,14 @@ def search_messages(
         return
 
     if output_format is not None and action != "list":
-        raise typer.BadParameter("--format is only supported for the list action")
+        _exit_with_error("--format is only supported for the list action")
+
+    _validate_backup_path(action, backup_path)
 
     query = _build_search_query(settings, saved_query=saved_query, query_parts=query_parts)
 
     application = build_application(settings)
+    progress_callback = _build_backup_progress_reporter() if action == "backup" else None
     rows = application.search_messages(
         action=action,
         query=query,
@@ -246,6 +295,8 @@ def search_messages(
         from_date=from_date,
         to_date=to_date,
         starred=_parse_starred(starred),
+        backup_path=backup_path,
+        progress_callback=progress_callback,
     )
     _emit_rows(rows, output_format=output_format, default_text=_format_message_headers_text)
 
@@ -283,23 +334,29 @@ def label_action(
     action: Annotated[str, typer.Option("--action", "-a")] = "list",
     list_actions: Annotated[bool, typer.Option("--list-actions")] = False,
     output_format: Annotated[str | None, typer.Option("--format", "-f")] = None,
+    backup_path: Annotated[
+        Path | None,
+        typer.Option("--backup-path", dir_okay=True, file_okay=False),
+    ] = None,
     limit: Annotated[int | None, typer.Option("--limit", "-l", min=1)] = None,
     from_date: Annotated[str | None, typer.Option("--from-date")] = None,
     to_date: Annotated[str | None, typer.Option("--to-date")] = None,
     starred: Annotated[str | None, typer.Option("--starred")] = None,
 ) -> None:
     if list_actions:
-        for action_name in build_action_registry().list_names():
-            typer.echo(action_name)
+        _emit_action_list()
         return
 
     if label is None:
         raise typer.BadParameter("label is required unless --list-actions is used")
 
     if output_format is not None and action != "list":
-        raise typer.BadParameter("--format is only supported for the list action")
+        _exit_with_error("--format is only supported for the list action")
+
+    _validate_backup_path(action, backup_path)
 
     application = build_application(_load_settings_with_debug(config))
+    progress_callback = _build_backup_progress_reporter() if action == "backup" else None
     try:
         rows = application.run_label_action(
             label=label,
@@ -308,6 +365,8 @@ def label_action(
             from_date=from_date,
             to_date=to_date,
             starred=_parse_starred(starred),
+            backup_path=backup_path,
+            progress_callback=progress_callback,
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc

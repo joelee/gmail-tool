@@ -30,6 +30,13 @@ class GmailMessage:
     body: str
 
 
+@dataclass(frozen=True)
+class GmailRawMessage:
+    message_id: str
+    raw_bytes: bytes
+    internal_date: int
+
+
 class GmailGateway(Protocol):
     def list_labels(self) -> list[GmailLabel]: ...
 
@@ -57,6 +64,8 @@ class GmailGateway(Protocol):
     ) -> None: ...
 
     def get_message(self, message_id: str) -> GmailMessage: ...
+
+    def get_raw_message(self, message_id: str) -> GmailRawMessage: ...
 
 
 class GmailApiGateway:
@@ -193,6 +202,25 @@ class GmailApiGateway:
             date=header_map.get("date", ""),
             subject=header_map.get("subject", ""),
             body=body,
+        )
+
+    def get_raw_message(self, message_id: str) -> GmailRawMessage:
+        response = (
+            self._service.users()
+            .messages()
+            .get(
+                userId=self._user_id,
+                id=message_id,
+                format="raw",
+            )
+            .execute()
+        )
+        raw_data = response["raw"]
+        padding = "=" * (-len(raw_data) % 4)
+        return GmailRawMessage(
+            message_id=message_id,
+            raw_bytes=base64.urlsafe_b64decode(raw_data + padding),
+            internal_date=int(response["internalDate"]),
         )
 
     def _fetch_header(self, message_id: str) -> GmailMessageHeader:

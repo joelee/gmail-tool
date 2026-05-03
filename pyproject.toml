@@ -1,6 +1,6 @@
 [project]
 name = "gmail-tool"
-version = "0.1.1"
+version = "0.2.0"
 description = "CLI for Gmail labels and message queries"
 readme = "README.md"
 license = "MIT"

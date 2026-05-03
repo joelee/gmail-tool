@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from gmail_tool.actions import ActionRegistry, build_action_registry
 from gmail_tool.auth import build_credentials_provider
@@ -44,6 +46,8 @@ class Application:
         from_date: str | None,
         to_date: str | None,
         starred: bool | None,
+        backup_path: Path | None = None,
+        progress_callback: Callable[[str | None], None] | None = None,
     ) -> list[str] | list[GmailMessageHeader]:
         filters = MessageFilters(
             from_date=parse_date(from_date),
@@ -57,6 +61,8 @@ class Application:
             raw_query=query,
             filters=filters,
             limit=effective_limit,
+            backup_path=backup_path,
+            progress_callback=progress_callback,
         )
 
     def run_label_action(
@@ -68,6 +74,8 @@ class Application:
         from_date: str | None,
         to_date: str | None,
         starred: bool | None,
+        backup_path: Path | None = None,
+        progress_callback: Callable[[str | None], None] | None = None,
     ) -> list[str] | list[GmailMessageHeader]:
         filters = MessageFilters(
             from_date=parse_date(from_date),
@@ -82,6 +90,8 @@ class Application:
             resolved_label,
             filters,
             limit=effective_limit,
+            backup_path=backup_path,
+            progress_callback=progress_callback,
         )
 
     def _resolve_label_id(self, label: str) -> str:
@@ -105,4 +115,8 @@ def build_application(settings: Settings) -> Application:
     credentials = credentials_provider.get_credentials()
     service = build("gmail", "v1", credentials=credentials)
     gateway = GmailApiGateway(service=service, user_id=settings.gmail.user_id)
-    return Application(settings=settings, gateway=gateway, action_registry=build_action_registry())
+    return Application(
+        settings=settings,
+        gateway=gateway,
+        action_registry=build_action_registry(default_backup_path=settings.backup.path),
+    )

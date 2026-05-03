@@ -39,6 +39,9 @@ token_file_env = "GOOGLE_OAUTH_TOKEN_FILE"
 service_account_file_env = "GOOGLE_SERVICE_ACCOUNT_FILE"
 subject_env = "GOOGLE_SERVICE_ACCOUNT_SUBJECT"
 
+[backup]
+path = "backup"
+
 [gmail]
 user_id_env = "GMAIL_USER_ID"
 ```
@@ -51,3 +54,4 @@ user_id_env = "GMAIL_USER_ID"
 - For setup instructions, see `docs/google-credentials.md`.
 - `app.default_limit` is used when `--limit` is not provided. The default is `100`.
 - `search.saved_queries` defines reusable raw Gmail queries for the `search --saved-query <name>` command path.
+- `backup.path` sets the default root directory for the `backup` action. Relative paths resolve from the config file directory.
