@@ -6,6 +6,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from gmail_tool.auth import OAuthCredentialsProvider, ServiceAccountCredentialsProvider
 from gmail_tool.cli import _build_backup_progress_reporter, app
 from gmail_tool.config import (
     AppSettings,
@@ -160,6 +161,21 @@ def build_settings() -> Settings:
     )
 
 
+def _mock_missing_oauth_setup(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "gmail_tool.cli.build_application",
+        lambda settings: (_ for _ in ()).throw(
+            ValueError("Missing required environment variable: GOOGLE_OAUTH_CLIENT_SECRET_FILE")
+        ),
+    )
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+    monkeypatch.setattr(
+        "gmail_tool.cli.discover_config_path", lambda path=None, required=False: None
+    )
+    monkeypatch.setattr("gmail_tool.cli.xdg_config_home", lambda: Path("/tmp/config"))
+    monkeypatch.setattr("gmail_tool.cli.xdg_state_home", lambda: Path("/tmp/state"))
+
+
 def test_labels_command_outputs_label_names(monkeypatch) -> None:
     fake_app = FakeApplication()
     monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
@@ -194,7 +210,7 @@ def test_global_verbose_outputs_debug_to_stderr(monkeypatch) -> None:
     fake_app = FakeApplication()
     monkeypatch.setattr(
         "gmail_tool.cli.discover_config_path",
-        lambda path=None: Path("/tmp/test-config.toml"),
+        lambda path=None, required=False: Path("/tmp/test-config.toml"),
     )
     monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
     monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
@@ -274,7 +290,7 @@ def test_label_short_config_format_and_limit_options(monkeypatch) -> None:
 
     monkeypatch.setattr(
         "gmail_tool.cli.discover_config_path",
-        lambda path=None: Path(path) if path else Path("/tmp/test-config.toml"),
+        lambda path=None, required=False: Path(path) if path else Path("/tmp/test-config.toml"),
     )
     monkeypatch.setattr(
         "gmail_tool.cli.load_settings",
@@ -343,6 +359,242 @@ def test_auth_check_command_outputs_status(monkeypatch) -> None:
     assert "auth_mode=oauth" in result.stdout
     assert "gmail_user_id=me" in result.stdout
     assert "label_count=2" in result.stdout
+
+
+def test_auth_subcommand_check_outputs_status(monkeypatch) -> None:
+    fake_app = FakeApplication()
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+    monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
+
+    result = CliRunner().invoke(app, ["auth", "check"])
+
+    assert result.exit_code == 0
+    assert "auth_mode=oauth" in result.stdout
+    assert "gmail_user_id=me" in result.stdout
+    assert "label_count=2" in result.stdout
+
+
+def test_auth_login_runs_oauth_flow(monkeypatch) -> None:
+    settings = build_settings()
+
+    class FakeProvider(OAuthCredentialsProvider):
+        def __init__(self) -> None:
+            self.force_reauth = None
+            self.open_browser = None
+
+        def get_credentials(self, *, force_reauth: bool = False, open_browser: bool = True):
+            self.force_reauth = force_reauth
+            self.open_browser = open_browser
+            return type("Creds", (), {"scopes": ["scope-a"]})()
+
+    fake_provider = FakeProvider()
+
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: settings)
+    monkeypatch.setattr("gmail_tool.cli.build_credentials_provider", lambda settings: fake_provider)
+
+    result = CliRunner().invoke(app, ["auth", "login", "--force"])
+
+    assert result.exit_code == 0
+    assert fake_provider.force_reauth is True
+    assert fake_provider.open_browser is True
+    assert "status=authenticated" in result.stdout
+    assert f"token_file={settings.auth.oauth.token_file}" in result.stdout
+
+
+def test_auth_login_supports_no_browser(monkeypatch) -> None:
+    settings = build_settings()
+
+    class FakeProvider(OAuthCredentialsProvider):
+        def __init__(self) -> None:
+            self.open_browser = None
+
+        def get_credentials(self, *, force_reauth: bool = False, open_browser: bool = True):
+            del force_reauth
+            self.open_browser = open_browser
+            return type("Creds", (), {"scopes": ["scope-a"]})()
+
+    fake_provider = FakeProvider()
+
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: settings)
+    monkeypatch.setattr("gmail_tool.cli.build_credentials_provider", lambda settings: fake_provider)
+
+    result = CliRunner().invoke(app, ["auth", "login", "--no-browser"])
+
+    assert result.exit_code == 0
+    assert fake_provider.open_browser is False
+
+
+def test_auth_paths_outputs_resolved_locations(monkeypatch) -> None:
+    settings = build_settings()
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: settings)
+
+    result = CliRunner().invoke(app, ["auth", "paths"])
+
+    assert result.exit_code == 0
+    assert f"auth_mode={settings.auth.mode.value}" in result.stdout
+    assert f"oauth_client_secret_file={settings.auth.oauth.client_secret_file}" in result.stdout
+    assert f"oauth_token_file={settings.auth.oauth.token_file}" in result.stdout
+    assert f"gmail_user_id={settings.gmail.user_id}" in result.stdout
+
+
+def test_auth_logout_removes_existing_oauth_token(monkeypatch, tmp_path: Path) -> None:
+    token_file = tmp_path / "oauth-token.json"
+    token_file.write_text("{}", encoding="utf-8")
+
+    settings = Settings(
+        app=build_settings().app,
+        search=build_settings().search,
+        auth=AuthSettings(
+            mode=AuthMode.OAUTH,
+            scopes=["scope-a"],
+            oauth=OAuthSettings(client_secret_file="secret.json", token_file=str(token_file)),
+            service_account=ServiceAccountSettings(
+                service_account_file="service.json",
+                subject="user@example.com",
+            ),
+        ),
+        backup=build_settings().backup,
+        gmail=build_settings().gmail,
+    )
+
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: settings)
+
+    result = CliRunner().invoke(app, ["auth", "logout"])
+
+    assert result.exit_code == 0
+    assert not token_file.exists()
+    assert f"removed_token_file={token_file}" in result.stdout
+
+
+def test_auth_logout_reports_missing_oauth_token(monkeypatch, tmp_path: Path) -> None:
+    token_file = tmp_path / "missing-token.json"
+    settings = Settings(
+        app=build_settings().app,
+        search=build_settings().search,
+        auth=AuthSettings(
+            mode=AuthMode.OAUTH,
+            scopes=["scope-a"],
+            oauth=OAuthSettings(client_secret_file="secret.json", token_file=str(token_file)),
+            service_account=ServiceAccountSettings(
+                service_account_file="service.json",
+                subject="user@example.com",
+            ),
+        ),
+        backup=build_settings().backup,
+        gmail=build_settings().gmail,
+    )
+
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: settings)
+
+    result = CliRunner().invoke(app, ["auth", "logout"])
+
+    assert result.exit_code == 0
+    assert f"token_file_not_found={token_file}" in result.stdout
+
+
+def test_auth_logout_rejects_service_account_mode(monkeypatch) -> None:
+    settings = Settings(
+        app=build_settings().app,
+        search=build_settings().search,
+        auth=AuthSettings(
+            mode=AuthMode.SERVICE_ACCOUNT,
+            scopes=["scope-a"],
+            oauth=OAuthSettings(client_secret_file="secret.json", token_file="token.json"),
+            service_account=ServiceAccountSettings(
+                service_account_file="service.json",
+                subject="user@example.com",
+            ),
+        ),
+        backup=build_settings().backup,
+        gmail=build_settings().gmail,
+    )
+
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: settings)
+
+    result = CliRunner().invoke(app, ["auth", "logout"])
+
+    assert result.exit_code == 2
+    assert "auth logout is only supported when auth mode is oauth" in result.stderr
+
+
+def test_auth_login_rejects_service_account_mode(monkeypatch) -> None:
+    settings = Settings(
+        app=build_settings().app,
+        search=build_settings().search,
+        auth=AuthSettings(
+            mode=AuthMode.SERVICE_ACCOUNT,
+            scopes=["scope-a"],
+            oauth=OAuthSettings(client_secret_file="secret.json", token_file="token.json"),
+            service_account=ServiceAccountSettings(
+                service_account_file="service.json",
+                subject="user@example.com",
+            ),
+        ),
+        backup=build_settings().backup,
+        gmail=build_settings().gmail,
+    )
+
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: settings)
+    monkeypatch.setattr(
+        "gmail_tool.cli.build_credentials_provider",
+        lambda settings: ServiceAccountCredentialsProvider("service.json", ["scope-a"], None),
+    )
+
+    result = CliRunner().invoke(app, ["auth", "login"])
+
+    assert result.exit_code == 2
+    assert "auth login is only supported when auth mode is oauth" in result.stderr
+
+
+def test_auth_check_prints_setup_help_when_oauth_secret_missing(monkeypatch) -> None:
+    _mock_missing_oauth_setup(monkeypatch)
+
+    result = CliRunner().invoke(app, ["auth", "check"])
+
+    assert result.exit_code == 2
+    assert "Gmail authentication is not configured yet." in result.stderr
+    assert "/tmp/config/gmail-tool/client_secret.json" in result.stderr
+    assert "/tmp/state/gmail-tool/oauth-token.json" in result.stderr
+
+
+def test_labels_prints_setup_help_when_oauth_secret_missing(monkeypatch) -> None:
+    _mock_missing_oauth_setup(monkeypatch)
+
+    result = CliRunner().invoke(app, ["labels"])
+
+    assert result.exit_code == 2
+    assert "Gmail authentication is not configured yet." in result.stderr
+    assert "/tmp/config/gmail-tool/client_secret.json" in result.stderr
+
+
+def test_read_prints_setup_help_when_oauth_secret_missing(monkeypatch) -> None:
+    _mock_missing_oauth_setup(monkeypatch)
+
+    result = CliRunner().invoke(app, ["read", "abc123"])
+
+    assert result.exit_code == 2
+    assert "Gmail authentication is not configured yet." in result.stderr
+    assert "/tmp/state/gmail-tool/oauth-token.json" in result.stderr
+
+
+def test_search_prints_setup_help_when_oauth_secret_missing(monkeypatch) -> None:
+    _mock_missing_oauth_setup(monkeypatch)
+
+    result = CliRunner().invoke(app, ["search", "from:bob@example.com"])
+
+    assert result.exit_code == 2
+    assert "Gmail authentication is not configured yet." in result.stderr
+    assert "Run: gmail-tool auth login" in result.stderr
+
+
+def test_label_prints_setup_help_when_oauth_secret_missing(monkeypatch) -> None:
+    _mock_missing_oauth_setup(monkeypatch)
+
+    result = CliRunner().invoke(app, ["label", "INBOX"])
+
+    assert result.exit_code == 2
+    assert "Gmail authentication is not configured yet." in result.stderr
+    assert "Docs:" in result.stderr
 
 
 def test_read_command_outputs_full_message(monkeypatch) -> None:
@@ -638,6 +890,19 @@ def test_search_list_actions_outputs_supported_actions(monkeypatch) -> None:
         "label-remove:<label_name>  Remove a label from all matching messages.",
         "list                       List matching message headers.",
     ]
+
+
+def test_search_list_actions_does_not_load_settings(monkeypatch) -> None:
+    def fail_load_settings(path=None):
+        del path
+        raise AssertionError("search --list-actions should not load settings")
+
+    monkeypatch.setattr("gmail_tool.cli.load_settings", fail_load_settings)
+
+    result = CliRunner().invoke(app, ["search", "--list-actions"])
+
+    assert result.exit_code == 0
+    assert "backup" in result.stdout
 
 
 def test_label_list_actions_outputs_supported_actions(monkeypatch) -> None:

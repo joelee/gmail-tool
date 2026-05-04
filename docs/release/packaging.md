@@ -35,6 +35,11 @@ After the PyPI release is live:
 1. Download the published sdist URL for `gmail-tool-X.Y.Z.tar.gz`.
 2. Compute or copy its `sha256` from the published artifact.
 3. Update `../homebrew-oss/Formula/gmail-tool.rb`.
+
+```bash
+scripts/update-homebrew-formula.sh vX.Y.Z
+```
+
 4. Refresh Python resource blocks so the formula matches the published package dependencies.
 5. Validate on macOS:
 
@@ -45,3 +50,5 @@ brew audit --strict joelee/oss/gmail-tool
 ```
 
 Homebrew formula tests must stay credential-free. Prefer `gmail-tool --version` or `gmail-tool --help` for formula verification.
+
+`scripts/update-homebrew-formula.sh` writes to `HOMEBREW_FORMULA_PATH` when that environment variable is set. Otherwise it falls back to `../homebrew-oss/Formula/gmail-tool.rb`.

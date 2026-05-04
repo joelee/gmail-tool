@@ -1,5 +1,13 @@
 # gmail-tool
 
+[![PyPI version](https://img.shields.io/pypi/v/gmail-tool.svg)](https://pypi.org/project/gmail-tool/)
+[![CI](https://github.com/joelee/gmail-tool/actions/workflows/ci.yml/badge.svg)](https://github.com/joelee/gmail-tool/actions/workflows/ci.yml)
+[![Publish](https://github.com/joelee/gmail-tool/actions/workflows/publish.yml/badge.svg)](https://github.com/joelee/gmail-tool/actions/workflows/publish.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/joelee/gmail-tool/main/.github/badges/coverage.json)](https://github.com/joelee/gmail-tool/actions/workflows/ci.yml)
+[![PyPI Downloads](https://img.shields.io/pypi/dm/gmail-tool.svg)](https://pypi.org/project/gmail-tool/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://pypi.org/project/gmail-tool/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 CLI application for exploring Gmail labels and querying messages by label with configurable auth, actions, and filters.
 
 ## Initial Features
@@ -23,19 +31,37 @@ Supported auth modes:
 - OAuth desktop flow
 - Service account flow for Google Workspace domain-wide delegation
 
-Choose auth mode in `config.toml`.
+For the normal OAuth desktop flow, `config.toml` is optional.
+
+Quick start:
+
+1. Place your Desktop OAuth client JSON at `~/.config/gmail-tool/client_secret.json`
+2. Run `gmail-tool auth login`
+3. Run `gmail-tool auth check`
+
+Useful helpers:
+
+- `gmail-tool auth paths`
+- `gmail-tool auth logout`
+- `gmail-tool auth login --no-browser`
 
 Credential setup instructions are in `docs/google-credentials.md`.
 
 ## Quick Start
 
 1. Install `uv`.
-2. Copy `.env.sample` to `.env` and fill required values.
-3. Review `config.toml` and adjust auth settings.
-4. Install dependencies:
-
+2. For OAuth, place your Desktop OAuth client JSON at `~/.config/gmail-tool/client_secret.json`.
+3. Install dependencies:
 ```bash
 uv sync --dev
+```
+
+4. Log in:
+
+```bash
+uv run gmail-tool auth login
+uv run gmail-tool auth check
+uv run gmail-tool auth paths
 ```
 
 5. List labels:
@@ -66,6 +92,7 @@ Auth diagnostics:
 
 ```bash
 uv run gmail-tool auth-check
+uv run gmail-tool auth check
 ```
 
 Read a full message by identifier:
@@ -156,19 +183,26 @@ uv run gmail-tool search --list-actions
 
 See `config.toml`, `.env.sample`, and `docs/configuration.md`.
 
-All commands accept `--config <path>` or `-c <path>`. If omitted, config discovery falls back through environment, XDG, home config, `/etc`, and the project directory.
+All commands accept `--config <path>` or `-c <path>`. If omitted, config discovery falls back through environment, XDG, home config, `/etc`, and the project directory. If no config file is found, built-in OAuth defaults are used.
 
 ## Development
 
 ```bash
 uv sync --dev
-uv run pytest --cov=src/gmail_tool --cov-report=term-missing
+uv run pytest --cov=src/gmail_tool --cov-report=term-missing --cov-report=xml --cov-report=json
+./scripts/update-coverage-badge.sh coverage.json
 uv run pre-commit run --all-files
 ```
 
+Coverage artifacts produced by CI:
+
+- `coverage.json`
+- `coverage.xml`
+- `.github/badges/coverage.json`
+
 ## Releases
 
-PyPI publishing is handled by the GitHub Actions `Publish` workflow on version tags such as `v0.2.1`.
+PyPI publishing is handled by the GitHub Actions `Publish` workflow on version tags such as `v0.2.2`.
 
 Release packaging steps are documented in `docs/release/packaging.md`.
 
@@ -196,5 +230,6 @@ These tests verify Gmail API access against your real mailbox and are skipped un
 - [Configuration](docs/configuration.md)
 - [Google Credentials](docs/google-credentials.md)
 - [GMail Search Cheat Sheet](docs/search-cheat-sheet.md)
+- [Homebrew Packaging](docs/release/homebrew.md)
 - [Release Packaging](docs/release/packaging.md)
 - [Usage](docs/usage.md)

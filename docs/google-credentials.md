@@ -9,6 +9,13 @@ This project supports two Google authentication modes:
 
 Use OAuth unless you specifically manage a Workspace domain and need delegated access.
 
+For the normal OAuth flow, `config.toml` is optional.
+
+Default OAuth file locations:
+
+- client secret: `${XDG_CONFIG_HOME:-~/.config}/gmail-tool/client_secret.json`
+- token: `${XDG_STATE_HOME:-~/.local/state}/gmail-tool/oauth-token.json`
+
 ## OAuth Desktop Credentials
 
 Use this flow for a normal Gmail account.
@@ -29,30 +36,63 @@ Use this flow for a normal Gmail account.
    - Click `Create Credentials` -> `OAuth client ID`
    - Choose `Desktop app`
    - Download the JSON file
-6. Save the downloaded JSON outside version control, for example `secrets/oauth-client-secret.json`
-7. Update `.env`:
+6. Save the downloaded JSON to:
+
+```text
+~/.config/gmail-tool/client_secret.json
+```
+
+7. Restrict the file to your user only:
+
+```bash
+chmod 600 ~/.config/gmail-tool/client_secret.json
+```
+
+The CLI will tighten permissions automatically before reading it, but it is best to store it privately from the start.
+
+8. Start the browser login flow:
+
+```bash
+gmail-tool auth login
+```
+
+If you are on a remote shell or a machine without GUI browser access, use:
+
+```bash
+gmail-tool auth login --no-browser
+```
+
+This uses a copy-paste style OAuth flow instead of opening a local browser window.
+
+9. A browser window should open for consent. After approval, the refresh token will be stored at:
+
+```text
+~/.local/state/gmail-tool/oauth-token.json
+```
+
+10. Verify access:
+
+```bash
+gmail-tool auth check
+gmail-tool labels
+```
+
+Useful auth helpers:
+
+```bash
+gmail-tool auth paths
+gmail-tool auth logout
+```
+
+Optional overrides:
 
 ```dotenv
-GOOGLE_OAUTH_CLIENT_SECRET_FILE=secrets/oauth-client-secret.json
-GOOGLE_OAUTH_TOKEN_FILE=.secrets/oauth-token.json
+GOOGLE_OAUTH_CLIENT_SECRET_FILE=/path/to/client_secret.json
+GOOGLE_OAUTH_TOKEN_FILE=/path/to/oauth-token.json
 GMAIL_USER_ID=me
 ```
 
-8. Ensure `config.toml` contains:
-
-```toml
-[auth]
-mode = "oauth"
-scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
-```
-
-9. Run the CLI once:
-
-```bash
-uv run gmail-tool labels
-```
-
-10. A browser window should open for consent. After approval, the refresh token will be stored at `GOOGLE_OAUTH_TOKEN_FILE`.
+You only need `config.toml` if you want to change auth mode, scopes, saved queries, backup defaults, or other non-secret settings.
 
 The live integration tests can also perform this first authorization if you run them with `ALLOW_GMAIL_OAUTH_BROWSER=true`.
 
@@ -91,11 +131,11 @@ scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
 
 ## Recommended Local Layout
 
-- `.env`
-- `config.toml`
-- `secrets/oauth-client-secret.json`
-- `secrets/service-account.json`
-- `.secrets/oauth-token.json`
+- optional `config.toml`
+- optional `.env`
+- `~/.config/gmail-tool/client_secret.json`
+- `~/.local/state/gmail-tool/oauth-token.json`
+- optional `secrets/service-account.json`
 
 Credential JSON files and token files should remain untracked.
 

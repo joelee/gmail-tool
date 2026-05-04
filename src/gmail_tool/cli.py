@@ -12,13 +12,22 @@ import typer
 
 from gmail_tool.actions import build_action_registry
 from gmail_tool.app import build_application
-from gmail_tool.config import Settings, discover_config_path, load_settings
+from gmail_tool.auth import AuthSetupError, OAuthCredentialsProvider, build_credentials_provider
+from gmail_tool.config import (
+    Settings,
+    discover_config_path,
+    load_settings,
+    xdg_config_home,
+    xdg_state_home,
+)
 from gmail_tool.gmail import GmailLabel, GmailMessage, GmailMessageHeader
 
 app = typer.Typer(
     no_args_is_help=True,
     context_settings={"help_option_names": ["--help", "-h"]},
 )
+auth_app = typer.Typer(help="Authentication helpers.")
+app.add_typer(auth_app, name="auth")
 
 _verbose = False
 
@@ -142,14 +151,91 @@ def _debug(message: str) -> None:
 
 
 def _load_settings_with_debug(config: Path | None) -> Settings:
-    config_path = discover_config_path(config)
-    _debug(f"Using config: {config_path}")
+    config_path = discover_config_path(config, required=False)
+    if config_path is not None:
+        _debug(f"Using config: {config_path}")
+    else:
+        _debug("Using built-in defaults (no config.toml found)")
     return load_settings(config)
 
 
 def _exit_with_error(message: str) -> None:
     typer.echo(message, err=True)
     raise typer.Exit(code=2)
+
+
+def _run_with_setup_help(operation, *, config: Path | None = None):
+    try:
+        return operation()
+    except FileNotFoundError as exc:
+        _exit_with_error(f"{exc}\n\n{_oauth_setup_instructions(config)}")
+    except AuthSetupError as exc:
+        _exit_with_error(f"{exc}\n\n{_oauth_setup_instructions(config)}")
+    except ValueError as exc:
+        message = str(exc)
+        if message.startswith("Missing required environment variable:"):
+            _exit_with_error(f"{message}\n\n{_oauth_setup_instructions(config)}")
+        raise
+
+
+def _oauth_setup_instructions(config: Path | None) -> str:
+    config_path = discover_config_path(config, required=False)
+    client_secret_path = xdg_config_home() / "gmail-tool" / "client_secret.json"
+    token_path = xdg_state_home() / "gmail-tool" / "oauth-token.json"
+
+    lines = [
+        "Gmail authentication is not configured yet.",
+        "",
+        "Quick start:",
+        "1. In Google Cloud Console, create a Desktop OAuth client and enable Gmail API.",
+        f"2. Save the downloaded JSON file to: {client_secret_path}",
+        "3. Run: gmail-tool auth login",
+        "",
+        f"The OAuth token will be stored at: {token_path}",
+        "",
+        "Optional overrides:",
+        "  GOOGLE_OAUTH_CLIENT_SECRET_FILE",
+        "  GOOGLE_OAUTH_TOKEN_FILE",
+        "  GMAIL_USER_ID",
+        "",
+        "Docs:",
+        "  https://github.com/joelee/gmail-tool/blob/main/docs/google-credentials.md",
+    ]
+
+    if config_path is not None:
+        lines.extend(["", f"Resolved config file: {config_path}"])
+
+    return "\n".join(lines)
+
+
+def _run_auth_check(config: Path | None) -> None:
+    application = build_application(_load_settings_with_debug(config))
+    result = application.auth_check()
+    for key, value in result.items():
+        typer.echo(f"{key}={value}")
+
+
+def _run_auth_paths(config: Path | None) -> None:
+    settings = _load_settings_with_debug(config)
+    typer.echo(f"auth_mode={settings.auth.mode.value}")
+    typer.echo(f"oauth_client_secret_file={settings.auth.oauth.client_secret_file}")
+    typer.echo(f"oauth_token_file={settings.auth.oauth.token_file}")
+    typer.echo(f"service_account_file={settings.auth.service_account.service_account_file}")
+    typer.echo(f"gmail_user_id={settings.gmail.user_id}")
+
+
+def _run_auth_logout(config: Path | None) -> None:
+    settings = _load_settings_with_debug(config)
+    if settings.auth.mode.value != "oauth":
+        _exit_with_error("auth logout is only supported when auth mode is oauth")
+
+    token_path = Path(settings.auth.oauth.token_file)
+    if token_path.exists():
+        token_path.unlink()
+        typer.echo(f"removed_token_file={token_path}")
+        return
+
+    typer.echo(f"token_file_not_found={token_path}")
 
 
 def _emit_action_list() -> None:
@@ -210,9 +296,12 @@ def labels(
     ] = None,
     output_format: Annotated[str | None, typer.Option("--format", "-f")] = None,
 ) -> None:
-    application = build_application(_load_settings_with_debug(config))
-    labels = application.list_labels()
-    _emit_rows(labels, output_format=output_format, default_text=_format_labels_text)
+    def operation() -> None:
+        application = build_application(_load_settings_with_debug(config))
+        labels = application.list_labels()
+        _emit_rows(labels, output_format=output_format, default_text=_format_labels_text)
+
+    _run_with_setup_help(operation, config=config)
 
 
 @app.command("auth-check")
@@ -222,10 +311,71 @@ def auth_check(
         typer.Option("--config", "-c", dir_okay=False),
     ] = None,
 ) -> None:
-    application = build_application(_load_settings_with_debug(config))
-    result = application.auth_check()
-    for key, value in result.items():
-        typer.echo(f"{key}={value}")
+    _run_with_setup_help(lambda: _run_auth_check(config), config=config)
+
+
+@auth_app.command("check")
+def auth_check_command(
+    config: Annotated[
+        Path | None,
+        typer.Option("--config", "-c", dir_okay=False),
+    ] = None,
+) -> None:
+    _run_with_setup_help(lambda: _run_auth_check(config), config=config)
+
+
+@auth_app.command("login")
+def auth_login(
+    config: Annotated[
+        Path | None,
+        typer.Option("--config", "-c", dir_okay=False),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Ignore an existing token and force browser login."),
+    ] = False,
+    no_browser: Annotated[
+        bool,
+        typer.Option(
+            "--no-browser", help="Print a console OAuth flow instead of opening a browser."
+        ),
+    ] = False,
+) -> None:
+    def operation() -> None:
+        settings = _load_settings_with_debug(config)
+        provider = build_credentials_provider(settings)
+
+        if not isinstance(provider, OAuthCredentialsProvider):
+            _exit_with_error("auth login is only supported when auth mode is oauth")
+
+        credentials = provider.get_credentials(force_reauth=force, open_browser=not no_browser)
+        typer.echo(f"auth_mode={settings.auth.mode.value}")
+        typer.echo(f"gmail_user_id={settings.gmail.user_id}")
+        typer.echo(f"token_file={settings.auth.oauth.token_file}")
+        typer.echo(f"scopes={' '.join(credentials.scopes or settings.auth.scopes)}")
+        typer.echo("status=authenticated")
+
+    _run_with_setup_help(operation, config=config)
+
+
+@auth_app.command("paths")
+def auth_paths(
+    config: Annotated[
+        Path | None,
+        typer.Option("--config", "-c", dir_okay=False),
+    ] = None,
+) -> None:
+    _run_with_setup_help(lambda: _run_auth_paths(config), config=config)
+
+
+@auth_app.command("logout")
+def auth_logout(
+    config: Annotated[
+        Path | None,
+        typer.Option("--config", "-c", dir_okay=False),
+    ] = None,
+) -> None:
+    _run_with_setup_help(lambda: _run_auth_logout(config), config=config)
 
 
 @app.command("read")
@@ -236,10 +386,13 @@ def read_message(
         typer.Option("--config", "-c", dir_okay=False),
     ] = None,
 ) -> None:
-    application = build_application(_load_settings_with_debug(config))
-    message = application.read_message(message_id)
-    for line in _format_full_message_text(message):
-        typer.echo(line)
+    def operation() -> None:
+        application = build_application(_load_settings_with_debug(config))
+        message = application.read_message(message_id)
+        for line in _format_full_message_text(message):
+            typer.echo(line)
+
+    _run_with_setup_help(operation, config=config)
 
 
 @app.command("search")
@@ -264,8 +417,6 @@ def search_messages(
     to_date: Annotated[str | None, typer.Option("--to-date")] = None,
     starred: Annotated[str | None, typer.Option("--starred")] = None,
 ) -> None:
-    settings = _load_settings_with_debug(config)
-
     if list_actions:
         _emit_action_list()
         return
@@ -284,21 +435,25 @@ def search_messages(
 
     _validate_backup_path(action, backup_path)
 
-    query = _build_search_query(settings, saved_query=saved_query, query_parts=query_parts)
+    def operation() -> None:
+        settings = _load_settings_with_debug(config)
+        query = _build_search_query(settings, saved_query=saved_query, query_parts=query_parts)
 
-    application = build_application(settings)
-    progress_callback = _build_backup_progress_reporter() if action == "backup" else None
-    rows = application.search_messages(
-        action=action,
-        query=query,
-        limit=limit,
-        from_date=from_date,
-        to_date=to_date,
-        starred=_parse_starred(starred),
-        backup_path=backup_path,
-        progress_callback=progress_callback,
-    )
-    _emit_rows(rows, output_format=output_format, default_text=_format_message_headers_text)
+        application = build_application(settings)
+        progress_callback = _build_backup_progress_reporter() if action == "backup" else None
+        rows = application.search_messages(
+            action=action,
+            query=query,
+            limit=limit,
+            from_date=from_date,
+            to_date=to_date,
+            starred=_parse_starred(starred),
+            backup_path=backup_path,
+            progress_callback=progress_callback,
+        )
+        _emit_rows(rows, output_format=output_format, default_text=_format_message_headers_text)
+
+    _run_with_setup_help(operation, config=config)
 
 
 def _build_search_query(
@@ -355,22 +510,25 @@ def label_action(
 
     _validate_backup_path(action, backup_path)
 
-    application = build_application(_load_settings_with_debug(config))
-    progress_callback = _build_backup_progress_reporter() if action == "backup" else None
-    try:
-        rows = application.run_label_action(
-            label=label,
-            action=action,
-            limit=limit,
-            from_date=from_date,
-            to_date=to_date,
-            starred=_parse_starred(starred),
-            backup_path=backup_path,
-            progress_callback=progress_callback,
-        )
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-    _emit_rows(rows, output_format=output_format, default_text=_format_message_headers_text)
+    def operation() -> None:
+        application = build_application(_load_settings_with_debug(config))
+        progress_callback = _build_backup_progress_reporter() if action == "backup" else None
+        try:
+            rows = application.run_label_action(
+                label=label,
+                action=action,
+                limit=limit,
+                from_date=from_date,
+                to_date=to_date,
+                starred=_parse_starred(starred),
+                backup_path=backup_path,
+                progress_callback=progress_callback,
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        _emit_rows(rows, output_format=output_format, default_text=_format_message_headers_text)
+
+    _run_with_setup_help(operation, config=config)
 
 
 def _emit_rows(

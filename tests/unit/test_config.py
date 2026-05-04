@@ -197,3 +197,50 @@ def test_discover_config_path_raises_when_no_file_exists(monkeypatch, tmp_path: 
             project_dir=tmp_path / "project",
             etc_path=tmp_path / "missing-etc.toml",
         )
+
+
+def test_discover_config_path_returns_none_when_not_required(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("GMAIL_TOOL_CONFIG", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    discovered = discover_config_path(
+        None,
+        project_dir=tmp_path / "project",
+        etc_path=tmp_path / "missing-etc.toml",
+        required=False,
+    )
+
+    assert discovered is None
+
+
+def test_load_settings_uses_defaults_without_config(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("gmail_tool.config.load_dotenv", lambda: None)
+    monkeypatch.setattr(
+        "gmail_tool.config.discover_config_path",
+        lambda config_path=None, required=False: None,
+    )
+    monkeypatch.delenv("GMAIL_TOOL_CONFIG", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_SECRET_FILE", raising=False)
+    monkeypatch.delenv("GOOGLE_OAUTH_TOKEN_FILE", raising=False)
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_SUBJECT", raising=False)
+    monkeypatch.delenv("GMAIL_USER_ID", raising=False)
+
+    settings = load_settings()
+
+    assert settings.app.default_limit == 100
+    assert settings.auth.mode is AuthMode.OAUTH
+    assert settings.auth.scopes == ["https://www.googleapis.com/auth/gmail.readonly"]
+    assert settings.auth.oauth.client_secret_file == str(
+        tmp_path / "home" / ".config" / "gmail-tool" / "client_secret.json"
+    )
+    assert settings.auth.oauth.token_file == str(
+        tmp_path / "home" / ".local" / "state" / "gmail-tool" / "oauth-token.json"
+    )
+    assert settings.gmail.user_id == "me"
+    assert settings.search.saved_queries == {}
+    assert settings.backup.path is None

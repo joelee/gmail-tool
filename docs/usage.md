@@ -8,6 +8,10 @@ uv run gmail-tool --verbose labels
 uv run gmail-tool labels
 uv run gmail-tool labels -f json
 uv run gmail-tool auth-check
+uv run gmail-tool auth login
+uv run gmail-tool auth check
+uv run gmail-tool auth paths
+uv run gmail-tool auth logout
 uv run gmail-tool read <MESSAGE_ID>
 uv run gmail-tool search <QUERY_PARTS...>
 uv run gmail-tool search --list-actions
@@ -52,9 +56,51 @@ uv run gmail-tool labels -f csv
 
 ```bash
 uv run gmail-tool auth-check
+uv run gmail-tool auth check
 ```
 
 Performs a lightweight read-only auth and Gmail reachability check.
+
+### Auth Login
+
+```bash
+uv run gmail-tool auth login
+```
+
+Starts the OAuth desktop browser flow and stores the refresh token locally.
+
+Force a fresh browser login even if a token already exists:
+
+```bash
+uv run gmail-tool auth login --force
+```
+
+Use a copy-paste console flow instead of opening a browser:
+
+```bash
+uv run gmail-tool auth login --no-browser
+```
+
+Default OAuth file locations when no overrides are set:
+
+- client secret: `${XDG_CONFIG_HOME:-~/.config}/gmail-tool/client_secret.json`
+- token: `${XDG_STATE_HOME:-~/.local/state}/gmail-tool/oauth-token.json`
+
+### Auth Paths
+
+```bash
+uv run gmail-tool auth paths
+```
+
+Prints the resolved auth mode, OAuth file locations, service account file path, and Gmail user ID.
+
+### Auth Logout
+
+```bash
+uv run gmail-tool auth logout
+```
+
+Deletes the locally stored OAuth token file without touching the client secret file.
 
 Example output:
 
@@ -259,6 +305,7 @@ uv run gmail-tool label JW/Receipts --from-date 2026-01-01 --to-date 2026-01-31 
 - Dates are interpreted as Gmail search date filters.
 - `--to-date` is compiled as an exclusive upper bound on the next day.
 - `--config <path>` or `-c <path>` overrides config discovery for any command.
+- `config.toml` is optional for the normal OAuth flow.
 - `--list-actions` works on both `label` and `search` and does not require Gmail authentication because it reads from the local action registry.
 - `--format json|csv` is supported for `labels` and `label <LABEL> list`.
 - `label <LABEL> list` includes a `message_id` field in text, JSON, and CSV output.

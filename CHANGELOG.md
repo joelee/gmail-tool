@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## v0.2.2 - 2026-05-03
+
+- Added GitHub Actions coverage JSON/XML artifacts and a generated coverage badge for README reporting.
+- Added a GitHub Actions workflow that refreshes the checked-in coverage badge after successful `main` branch CI runs.
+- Added README badges for PyPI version, CI status, coverage, Python support, and license.
+- Added README badges for publish workflow status and PyPI download counts.
+- Added configless OAuth defaults with XDG-based client secret and token paths for first-run installs.
+- Added `gmail-tool auth login` and `gmail-tool auth check` for guided authentication setup and verification.
+- Added `gmail-tool auth paths`, `gmail-tool auth logout`, and `gmail-tool auth login --no-browser` to improve local auth management and headless setup.
+- Improved auth errors to print actionable OAuth setup instructions instead of raw missing-config failures.
+- Tightened OAuth client secret and token file permissions during local auth setup.
+- Improved unit coverage for `gmail.py` and `auth.py` with focused request/response and OAuth flow tests.
+- Added a `scripts/update-homebrew-formula.sh` helper to regenerate the `gmail-tool` Homebrew formula from the published PyPI release and locked runtime dependencies.
+- Documented the Homebrew packaging flow and formula refresh steps.
+
 ## v0.2.1 - 2026-05-03
 
 - Added PyPI packaging metadata and a tag-driven GitHub Actions publish workflow using Trusted Publishing.
