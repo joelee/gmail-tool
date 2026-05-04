@@ -4,8 +4,8 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .coverage
-coverage.json
-coverage.xml
+/coverage.json
+/coverage.xml
 htmlcov/
 dist/
 build/
