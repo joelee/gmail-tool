@@ -48,6 +48,10 @@ class _MessagesResource:
         self._calls.append(("messages.modify", kwargs))
         return _ExecutableRequest(self._responses["messages.modify"].pop(0))
 
+    def trash(self, **kwargs):
+        self._calls.append(("messages.trash", kwargs))
+        return _ExecutableRequest(self._responses["messages.trash"].pop(0))
+
 
 class _UsersResource:
     def __init__(self, responses, calls):
@@ -217,6 +221,23 @@ def test_modify_message_labels_calls_gmail_modify() -> None:
                 "userId": "me",
                 "id": "m1",
                 "body": {"addLabelIds": ["A"], "removeLabelIds": ["B"]},
+            },
+        )
+    ]
+
+
+def test_trash_message_calls_gmail_trash() -> None:
+    service = _FakeService({"messages.trash": [{}]})
+
+    gateway = GmailApiGateway(service=service, user_id="me")
+    gateway.trash_message("m1")
+
+    assert service.calls == [
+        (
+            "messages.trash",
+            {
+                "userId": "me",
+                "id": "m1",
             },
         )
     ]

@@ -8,7 +8,9 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated
 
+import click
 import typer
+from typer.core import TyperCommand, TyperGroup
 
 from gmail_tool.actions import build_action_registry
 from gmail_tool.app import build_application
@@ -22,12 +24,91 @@ from gmail_tool.config import (
 )
 from gmail_tool.gmail import GmailLabel, GmailMessage, GmailMessageHeader
 
+
+def _format_sorted_help_options(
+    command: click.Command,
+    *,
+    ctx: click.Context,
+    formatter: click.HelpFormatter,
+) -> None:
+    args: list[tuple[str, str]] = []
+    opts: list[tuple[str, str]] = []
+
+    for param in command.get_params(ctx):
+        record = param.get_help_record(ctx)
+        if record is None:
+            continue
+        if param.param_type_name == "argument":
+            args.append(record)
+        elif param.param_type_name == "option":
+            opts.append(record)
+
+    if args:
+        with formatter.section("Arguments"):
+            formatter.write_dl(args)
+    if opts:
+        with formatter.section("Options"):
+            formatter.write_dl(sorted(opts, key=lambda item: item[0].lower()))
+
+
+def _sort_help_params(params: list[click.Parameter]) -> list[click.Parameter]:
+    arguments = [param for param in params if isinstance(param, click.Argument)]
+    options = [param for param in params if isinstance(param, click.Option)]
+    others = [param for param in params if not isinstance(param, click.Argument | click.Option)]
+
+    def option_sort_key(param: click.Option) -> str:
+        option_names = [*param.opts, *param.secondary_opts]
+        primary = next((name for name in option_names if name.startswith("--")), "")
+        if not primary and option_names:
+            primary = option_names[0]
+        return primary.lstrip("-").lower()
+
+    return [*arguments, *sorted(options, key=option_sort_key), *others]
+
+
+class SortedTyperCommand(TyperCommand):
+    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        self.__dict__["get_params"] = lambda inner_ctx: _sort_help_params(
+            TyperCommand.get_params(self, inner_ctx)
+        )
+        try:
+            super().format_help(ctx, formatter)
+        finally:
+            self.__dict__.pop("get_params", None)
+
+    def format_options(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        _format_sorted_help_options(self, ctx=ctx, formatter=formatter)
+
+
+class SortedTyperGroup(TyperGroup):
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        return sorted(super().list_commands(ctx), key=str.lower)
+
+    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        self.__dict__["get_params"] = lambda inner_ctx: _sort_help_params(
+            TyperGroup.get_params(self, inner_ctx)
+        )
+        try:
+            super().format_help(ctx, formatter)
+        finally:
+            self.__dict__.pop("get_params", None)
+
+    def format_options(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        _format_sorted_help_options(self, ctx=ctx, formatter=formatter)
+        self.format_commands(ctx, formatter)
+
+
 app = typer.Typer(
     no_args_is_help=True,
     context_settings={"help_option_names": ["--help", "-h"]},
+    cls=SortedTyperGroup,
 )
-auth_app = typer.Typer(help="Authentication helpers.")
+auth_app = typer.Typer(help="Authentication helpers.", cls=SortedTyperGroup)
+message_app = typer.Typer(
+    help="Read or delete a Gmail message by message ID.", cls=SortedTyperGroup
+)
 app.add_typer(auth_app, name="auth")
+app.add_typer(message_app, name="message")
 
 _verbose = False
 
@@ -245,6 +326,13 @@ def _emit_action_list() -> None:
         typer.echo(f"{action_name.ljust(width)}  {description}")
 
 
+def _emit_action_help(action_name: str) -> None:
+    try:
+        typer.echo(build_action_registry().help_for_action(action_name))
+    except ValueError as exc:
+        _exit_with_error(str(exc))
+
+
 def _build_backup_progress_reporter():
     previous_width = 0
 
@@ -264,9 +352,37 @@ def _build_backup_progress_reporter():
     return report
 
 
+def _should_report_batch_progress(action: str) -> bool:
+    return action not in {"count", "list"}
+
+
 def _validate_backup_path(action: str, backup_path: Path | None) -> None:
     if backup_path is not None and action != "backup":
         _exit_with_error("--backup-path is only supported for the backup action")
+
+
+def _validate_backup_delete_flags(action: str, *, delete: bool, force: bool) -> None:
+    if delete and action != "backup":
+        _exit_with_error("--delete is only supported for the backup action")
+    if force and (action != "backup" or not delete):
+        _exit_with_error("--force is only supported together with --delete for the backup action")
+
+
+def _validate_label_name_option(action: str, label_name: str | None) -> None:
+    label_mutation_actions = {"label-add", "label-remove"}
+    if label_name is not None and action not in label_mutation_actions:
+        _exit_with_error("--name is only supported for the label-add and label-remove actions")
+    if action in label_mutation_actions and not label_name:
+        _exit_with_error(f"--name is required for the {action} action")
+
+
+def _confirm_backup_delete(count: int) -> None:
+    if count <= 0:
+        typer.echo("No newly written messages would be moved to Bin.", err=True)
+        return
+    confirmed = typer.confirm(f"{count} messages will be moved to Bin after backup. Continue?")
+    if not confirmed:
+        _exit_with_error("Cancelled.")
 
 
 @app.callback(invoke_without_command=True)
@@ -288,7 +404,7 @@ def main_callback(
         raise typer.Exit()
 
 
-@app.command("labels")
+@app.command("labels", help="List Gmail labels.", cls=SortedTyperCommand)
 def labels(
     config: Annotated[
         Path | None,
@@ -304,17 +420,7 @@ def labels(
     _run_with_setup_help(operation, config=config)
 
 
-@app.command("auth-check")
-def auth_check(
-    config: Annotated[
-        Path | None,
-        typer.Option("--config", "-c", dir_okay=False),
-    ] = None,
-) -> None:
-    _run_with_setup_help(lambda: _run_auth_check(config), config=config)
-
-
-@auth_app.command("check")
+@auth_app.command("check", help="Check authentication and Gmail access.", cls=SortedTyperCommand)
 def auth_check_command(
     config: Annotated[
         Path | None,
@@ -324,7 +430,7 @@ def auth_check_command(
     _run_with_setup_help(lambda: _run_auth_check(config), config=config)
 
 
-@auth_app.command("login")
+@auth_app.command("login", help="Authenticate with Gmail using OAuth.", cls=SortedTyperCommand)
 def auth_login(
     config: Annotated[
         Path | None,
@@ -358,7 +464,7 @@ def auth_login(
     _run_with_setup_help(operation, config=config)
 
 
-@auth_app.command("paths")
+@auth_app.command("paths", help="Show resolved authentication file paths.", cls=SortedTyperCommand)
 def auth_paths(
     config: Annotated[
         Path | None,
@@ -368,7 +474,7 @@ def auth_paths(
     _run_with_setup_help(lambda: _run_auth_paths(config), config=config)
 
 
-@auth_app.command("logout")
+@auth_app.command("logout", help="Remove the stored OAuth token file.", cls=SortedTyperCommand)
 def auth_logout(
     config: Annotated[
         Path | None,
@@ -378,8 +484,10 @@ def auth_logout(
     _run_with_setup_help(lambda: _run_auth_logout(config), config=config)
 
 
-@app.command("read")
-def read_message(
+@message_app.command(
+    "read", help="Read a full Gmail message by Gmail message ID.", cls=SortedTyperCommand
+)
+def message_read(
     message_id: str,
     config: Annotated[
         Path | None,
@@ -395,30 +503,120 @@ def read_message(
     _run_with_setup_help(operation, config=config)
 
 
-@app.command("search")
-def search_messages(
-    query_parts: Annotated[list[str] | None, typer.Argument()] = None,
+@message_app.command(
+    "delete", help="Move a Gmail message to Bin by Gmail message ID.", cls=SortedTyperCommand
+)
+def message_delete(
+    message_id: str,
     config: Annotated[
         Path | None,
         typer.Option("--config", "-c", dir_okay=False),
     ] = None,
-    action: Annotated[str, typer.Option("--action", "-a")] = "list",
-    saved_query: Annotated[str | None, typer.Option("--saved-query")] = None,
-    list_actions: Annotated[bool, typer.Option("--list-actions")] = False,
-    list_query_examples: Annotated[bool, typer.Option("--list-query-examples")] = False,
-    cheat_sheet: Annotated[bool, typer.Option("--cheat-sheet")] = False,
-    output_format: Annotated[str | None, typer.Option("--format", "-f")] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Skip the delete confirmation prompt."),
+    ] = False,
+) -> None:
+    def operation() -> None:
+        if not force:
+            confirmed = typer.confirm(f"Move message {message_id} to Bin?")
+            if not confirmed:
+                _exit_with_error("Cancelled.")
+        application = build_application(_load_settings_with_debug(config))
+        application.delete_message(message_id)
+        typer.echo(f"message_id={message_id} moved to Bin")
+
+    _run_with_setup_help(operation, config=config)
+
+
+@app.command(
+    "search", help="Search Gmail messages and run actions on matches.", cls=SortedTyperCommand
+)
+def search_messages(
+    query_parts: Annotated[
+        list[str] | None,
+        typer.Argument(help="Raw Gmail search terms to combine into a single query."),
+    ] = None,
+    config: Annotated[
+        Path | None,
+        typer.Option("--config", "-c", dir_okay=False, help="Use a specific config.toml file."),
+    ] = None,
+    action: Annotated[
+        str,
+        typer.Option(
+            "--action", "-a", help="Action to run: list, count, backup, or label mutation."
+        ),
+    ] = "list",
+    label_name: Annotated[
+        str | None,
+        typer.Option("--name", help="Label name for label-add or label-remove actions."),
+    ] = None,
+    saved_query: Annotated[
+        str | None,
+        typer.Option("--saved-query", help="Saved query name from config.toml to prepend."),
+    ] = None,
+    list_actions: Annotated[
+        bool,
+        typer.Option("--list-actions", help="List supported actions and exit."),
+    ] = False,
+    help_action: Annotated[
+        str | None,
+        typer.Option("--help-action", help="Show help for a specific action and exit."),
+    ] = None,
+    list_query_examples: Annotated[
+        bool,
+        typer.Option("--list-query-examples", help="Print built-in Gmail query examples and exit."),
+    ] = False,
+    cheat_sheet: Annotated[
+        bool,
+        typer.Option("--cheat-sheet", help="Print a Gmail search operator cheat sheet and exit."),
+    ] = False,
+    output_format: Annotated[
+        str | None,
+        typer.Option("--format", "-f", help="Output format for list action: json or csv."),
+    ] = None,
     backup_path: Annotated[
         Path | None,
-        typer.Option("--backup-path", dir_okay=True, file_okay=False),
+        typer.Option(
+            "--backup-path",
+            dir_okay=True,
+            file_okay=False,
+            help="Directory where backup .eml files will be written.",
+        ),
     ] = None,
-    limit: Annotated[int | None, typer.Option("--limit", "-l", min=1)] = None,
-    from_date: Annotated[str | None, typer.Option("--from-date")] = None,
-    to_date: Annotated[str | None, typer.Option("--to-date")] = None,
-    starred: Annotated[str | None, typer.Option("--starred")] = None,
+    delete: Annotated[
+        bool,
+        typer.Option("--delete", help="Move successfully backed-up messages to Bin."),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Skip the delete confirmation prompt."),
+    ] = False,
+    limit: Annotated[
+        int | None,
+        typer.Option(
+            "--limit", "-l", min=1, help="Maximum number of matching messages to process."
+        ),
+    ] = None,
+    from_date: Annotated[
+        str | None,
+        typer.Option("--from-date", help="Only include messages on or after YYYY-MM-DD."),
+    ] = None,
+    to_date: Annotated[
+        str | None,
+        typer.Option("--to-date", help="Only include messages before YYYY-MM-DD."),
+    ] = None,
+    starred: Annotated[
+        str | None,
+        typer.Option("--starred", help="Filter by starred state: true or false."),
+    ] = None,
 ) -> None:
     if list_actions:
         _emit_action_list()
+        return
+
+    if help_action is not None:
+        _emit_action_help(help_action)
         return
 
     if cheat_sheet:
@@ -433,22 +631,38 @@ def search_messages(
     if output_format is not None and action != "list":
         _exit_with_error("--format is only supported for the list action")
 
+    _validate_label_name_option(action, label_name)
     _validate_backup_path(action, backup_path)
+    _validate_backup_delete_flags(action, delete=delete, force=force)
 
     def operation() -> None:
         settings = _load_settings_with_debug(config)
         query = _build_search_query(settings, saved_query=saved_query, query_parts=query_parts)
 
         application = build_application(settings)
-        progress_callback = _build_backup_progress_reporter() if action == "backup" else None
+        if delete and not force:
+            delete_count = application.count_search_backup_deletions(
+                query=query,
+                limit=limit,
+                from_date=from_date,
+                to_date=to_date,
+                starred=_parse_starred(starred),
+                backup_path=backup_path,
+            )
+            _confirm_backup_delete(delete_count)
+        progress_callback = (
+            _build_backup_progress_reporter() if _should_report_batch_progress(action) else None
+        )
         rows = application.search_messages(
             action=action,
+            label_name=label_name,
             query=query,
             limit=limit,
             from_date=from_date,
             to_date=to_date,
             starred=_parse_starred(starred),
             backup_path=backup_path,
+            delete_after_backup=delete,
             progress_callback=progress_callback,
         )
         _emit_rows(rows, output_format=output_format, default_text=_format_message_headers_text)
@@ -479,27 +693,80 @@ def _build_search_query(
     return " ".join(parts)
 
 
-@app.command("label")
+@app.command("label", help="Run an action against a Gmail label.", cls=SortedTyperCommand)
 def label_action(
-    label: Annotated[str | None, typer.Argument()] = None,
+    label: Annotated[
+        str | None,
+        typer.Argument(help="Exact Gmail label name or exact Gmail label ID."),
+    ] = None,
     config: Annotated[
         Path | None,
-        typer.Option("--config", "-c", dir_okay=False),
+        typer.Option("--config", "-c", dir_okay=False, help="Use a specific config.toml file."),
     ] = None,
-    action: Annotated[str, typer.Option("--action", "-a")] = "list",
-    list_actions: Annotated[bool, typer.Option("--list-actions")] = False,
-    output_format: Annotated[str | None, typer.Option("--format", "-f")] = None,
+    action: Annotated[
+        str,
+        typer.Option(
+            "--action", "-a", help="Action to run: list, count, backup, or label mutation."
+        ),
+    ] = "list",
+    label_name: Annotated[
+        str | None,
+        typer.Option("--name", help="Label name for label-add or label-remove actions."),
+    ] = None,
+    list_actions: Annotated[
+        bool,
+        typer.Option("--list-actions", help="List supported actions and exit."),
+    ] = False,
+    help_action: Annotated[
+        str | None,
+        typer.Option("--help-action", help="Show help for a specific action and exit."),
+    ] = None,
+    output_format: Annotated[
+        str | None,
+        typer.Option("--format", "-f", help="Output format for list action: json or csv."),
+    ] = None,
     backup_path: Annotated[
         Path | None,
-        typer.Option("--backup-path", dir_okay=True, file_okay=False),
+        typer.Option(
+            "--backup-path",
+            dir_okay=True,
+            file_okay=False,
+            help="Directory where backup .eml files will be written.",
+        ),
     ] = None,
-    limit: Annotated[int | None, typer.Option("--limit", "-l", min=1)] = None,
-    from_date: Annotated[str | None, typer.Option("--from-date")] = None,
-    to_date: Annotated[str | None, typer.Option("--to-date")] = None,
-    starred: Annotated[str | None, typer.Option("--starred")] = None,
+    delete: Annotated[
+        bool,
+        typer.Option("--delete", help="Move successfully backed-up messages to Bin."),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Skip the delete confirmation prompt."),
+    ] = False,
+    limit: Annotated[
+        int | None,
+        typer.Option(
+            "--limit", "-l", min=1, help="Maximum number of matching messages to process."
+        ),
+    ] = None,
+    from_date: Annotated[
+        str | None,
+        typer.Option("--from-date", help="Only include messages on or after YYYY-MM-DD."),
+    ] = None,
+    to_date: Annotated[
+        str | None,
+        typer.Option("--to-date", help="Only include messages before YYYY-MM-DD."),
+    ] = None,
+    starred: Annotated[
+        str | None,
+        typer.Option("--starred", help="Filter by starred state: true or false."),
+    ] = None,
 ) -> None:
     if list_actions:
         _emit_action_list()
+        return
+
+    if help_action is not None:
+        _emit_action_help(help_action)
         return
 
     if label is None:
@@ -508,20 +775,36 @@ def label_action(
     if output_format is not None and action != "list":
         _exit_with_error("--format is only supported for the list action")
 
+    _validate_label_name_option(action, label_name)
     _validate_backup_path(action, backup_path)
+    _validate_backup_delete_flags(action, delete=delete, force=force)
 
     def operation() -> None:
         application = build_application(_load_settings_with_debug(config))
-        progress_callback = _build_backup_progress_reporter() if action == "backup" else None
-        try:
-            rows = application.run_label_action(
+        if delete and not force:
+            delete_count = application.count_label_backup_deletions(
                 label=label,
-                action=action,
                 limit=limit,
                 from_date=from_date,
                 to_date=to_date,
                 starred=_parse_starred(starred),
                 backup_path=backup_path,
+            )
+            _confirm_backup_delete(delete_count)
+        progress_callback = (
+            _build_backup_progress_reporter() if _should_report_batch_progress(action) else None
+        )
+        try:
+            rows = application.run_label_action(
+                label=label,
+                action=action,
+                label_name=label_name,
+                limit=limit,
+                from_date=from_date,
+                to_date=to_date,
+                starred=_parse_starred(starred),
+                backup_path=backup_path,
+                delete_after_backup=delete,
                 progress_callback=progress_callback,
             )
         except ValueError as exc:

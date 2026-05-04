@@ -36,6 +36,32 @@ class FakeApplication:
             "label_count": 2,
         }
 
+    def count_search_backup_deletions(
+        self,
+        *,
+        query: str,
+        limit,
+        from_date,
+        to_date,
+        starred,
+        backup_path=None,
+    ) -> int:
+        del query, limit, from_date, to_date, starred, backup_path
+        return 1
+
+    def count_label_backup_deletions(
+        self,
+        *,
+        label: str,
+        limit,
+        from_date,
+        to_date,
+        starred,
+        backup_path=None,
+    ) -> int:
+        del label, limit, from_date, to_date, starred, backup_path
+        return 1
+
     def read_message(self, message_id: str) -> GmailMessage:
         self.last_call = {"message_id": message_id}
         return GmailMessage(
@@ -47,16 +73,21 @@ class FakeApplication:
             body="Message body",
         )
 
+    def delete_message(self, message_id: str) -> None:
+        self.last_call = {"message_id": message_id, "delete": True}
+
     def search_messages(
         self,
         *,
         action: str,
+        label_name: str | None = None,
         query: str,
         limit: int | None,
         from_date,
         to_date,
         starred,
         backup_path=None,
+        delete_after_backup: bool = False,
         progress_callback=None,
     ):
         self.last_call = {
@@ -67,8 +98,12 @@ class FakeApplication:
             "to_date": to_date,
             "starred": starred,
         }
+        if label_name is not None:
+            self.last_call["label_name"] = label_name
         if backup_path is not None:
             self.last_call["backup_path"] = backup_path
+        if delete_after_backup:
+            self.last_call["delete_after_backup"] = delete_after_backup
         if action == "list":
             return [
                 GmailMessageHeader(
@@ -87,6 +122,13 @@ class FakeApplication:
                 )
                 progress_callback(None)
             return ["1 messages written to /tmp/backups (0 skipped)"]
+        if action in {"label-add", "label-remove"}:
+            if progress_callback is not None:
+                progress_callback(
+                    f"Applying {action} 1/1: 2024-01-01 10:00:00 | "
+                    "search-1 | from@example.com | Search Result"
+                )
+                progress_callback(None)
         return ["2 messages updated"]
 
     def run_label_action(
@@ -94,11 +136,13 @@ class FakeApplication:
         *,
         label: str,
         action: str,
+        label_name: str | None = None,
         limit: int | None,
         from_date,
         to_date,
         starred,
         backup_path=None,
+        delete_after_backup: bool = False,
         progress_callback=None,
     ):
         self.last_call = {
@@ -109,8 +153,12 @@ class FakeApplication:
             "to_date": to_date,
             "starred": starred,
         }
+        if label_name is not None:
+            self.last_call["label_name"] = label_name
         if backup_path is not None:
             self.last_call["backup_path"] = backup_path
+        if delete_after_backup:
+            self.last_call["delete_after_backup"] = delete_after_backup
         if action == "list":
             return [
                 GmailMessageHeader(
@@ -135,6 +183,13 @@ class FakeApplication:
                 )
                 progress_callback(None)
             return ["1 messages written to /tmp/backups (0 skipped)"]
+        if action in {"label-add", "label-remove"}:
+            if progress_callback is not None:
+                progress_callback(
+                    f"Applying {action} 1/1: 2024-01-01 10:00:00 | "
+                    "abc123 | from@example.com | Hello"
+                )
+                progress_callback(None)
         return ["line-1", "line-2"]
 
 
@@ -174,6 +229,13 @@ def _mock_missing_oauth_setup(monkeypatch) -> None:
     )
     monkeypatch.setattr("gmail_tool.cli.xdg_config_home", lambda: Path("/tmp/config"))
     monkeypatch.setattr("gmail_tool.cli.xdg_state_home", lambda: Path("/tmp/state"))
+
+
+def _line_index_containing(output: str, text: str) -> int:
+    for index, line in enumerate(output.splitlines()):
+        if text in line:
+            return index
+    raise AssertionError(f"Could not find {text!r} in output:\n{output}")
 
 
 def test_labels_command_outputs_label_names(monkeypatch) -> None:
@@ -219,6 +281,136 @@ def test_global_verbose_outputs_debug_to_stderr(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert "Using config: /tmp/test-config.toml" in result.stderr
+
+
+def test_help_lists_command_descriptions() -> None:
+    result = CliRunner().invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "labels" in result.stdout
+    assert "List Gmail labels." in result.stdout
+    assert "message" in result.stdout
+    assert "Read or delete a Gmail message by message ID." in result.stdout
+    assert "search" in result.stdout
+    assert "Search Gmail messages and run actions on matches." in result.stdout
+    assert "label" in result.stdout
+    assert "Run an action against a Gmail label." in result.stdout
+    assert "auth" in result.stdout
+    assert "Authentication helpers." in result.stdout
+
+
+def test_top_level_help_sorts_options_and_commands_alphabetically() -> None:
+    result = CliRunner().invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+
+    option_lines = [
+        _line_index_containing(result.stdout, "--help"),
+        _line_index_containing(result.stdout, "--install-completion"),
+        _line_index_containing(result.stdout, "--show-completion"),
+        _line_index_containing(result.stdout, "--verbose"),
+        _line_index_containing(result.stdout, "--version"),
+    ]
+    assert option_lines == sorted(option_lines)
+
+    command_lines = [
+        _line_index_containing(result.stdout, "Authentication helpers."),
+        _line_index_containing(result.stdout, "Run an action against a Gmail label."),
+        _line_index_containing(result.stdout, "List Gmail labels."),
+        _line_index_containing(result.stdout, "Read or delete a Gmail message by message ID."),
+        _line_index_containing(result.stdout, "Search Gmail messages and run actions on matches."),
+    ]
+    assert command_lines == sorted(command_lines)
+
+
+def test_message_help_lists_read_and_delete_commands_alphabetically() -> None:
+    result = CliRunner().invoke(app, ["message", "--help"])
+
+    assert result.exit_code == 0
+
+    command_lines = [
+        _line_index_containing(result.stdout, "Move a Gmail message to Bin by Gmail message ID."),
+        _line_index_containing(result.stdout, "Read a full Gmail message by Gmail message ID."),
+    ]
+    assert command_lines == sorted(command_lines)
+
+
+def test_auth_help_sorts_commands_alphabetically() -> None:
+    result = CliRunner().invoke(app, ["auth", "--help"])
+
+    assert result.exit_code == 0
+
+    command_lines = [
+        _line_index_containing(result.stdout, "Check authentication and Gmail access."),
+        _line_index_containing(result.stdout, "Authenticate with Gmail using OAuth."),
+        _line_index_containing(result.stdout, "Remove the stored OAuth token file."),
+        _line_index_containing(result.stdout, "Show resolved authentication file paths."),
+    ]
+    assert command_lines == sorted(command_lines)
+
+
+def test_search_help_shows_argument_and_option_descriptions() -> None:
+    result = CliRunner().invoke(app, ["search", "--help"])
+
+    assert result.exit_code == 0
+    assert "Raw Gmail search terms to combine into" in result.stdout
+    assert "a single query." in result.stdout
+    assert "Use a specific" in result.stdout
+    assert "config.toml file." in result.stdout
+    assert "Action to run: list," in result.stdout
+    assert "count, backup, or label" in result.stdout
+    assert "mutation." in result.stdout
+    assert "Label name for" in result.stdout
+    assert "label-add or" in result.stdout
+    assert "label-remove actions." in result.stdout
+    assert "Saved query name from" in result.stdout
+    assert "config.toml to prepend." in result.stdout
+    assert "List supported actions" in result.stdout
+    assert "and exit." in result.stdout
+    assert "Print built-in Gmail" in result.stdout
+    assert "query examples and" in result.stdout
+    assert "Print a Gmail search" in result.stdout
+    assert "operator cheat sheet" in result.stdout
+    assert "Output format for list" in result.stdout
+    assert "action: json or csv." in result.stdout
+    assert "Directory where backup" in result.stdout
+    assert ".eml files will be" in result.stdout
+    assert "written." in result.stdout
+    assert "Maximum number of" in result.stdout
+    assert "matching messages to" in result.stdout
+    assert "process." in result.stdout
+    assert "Only include messages" in result.stdout
+    assert "on or after YYYY-MM-DD." in result.stdout
+    assert "before YYYY-MM-DD." in result.stdout
+    assert "Filter by starred" in result.stdout
+    assert "state: true or false." in result.stdout
+
+
+def test_label_help_shows_argument_and_option_descriptions() -> None:
+    result = CliRunner().invoke(app, ["label", "--help"])
+
+    assert result.exit_code == 0
+    assert "Exact Gmail label name or exact Gmail label ID." in result.stdout
+    assert "Use a specific config.toml" in result.stdout
+    assert "file." in result.stdout
+    assert "Action to run: list, count," in result.stdout
+    assert "backup, or label mutation." in result.stdout
+    assert "Label name for label-add or" in result.stdout
+    assert "label-remove actions." in result.stdout
+    assert "List supported actions and" in result.stdout
+    assert "exit." in result.stdout
+    assert "Output format for list action:" in result.stdout
+    assert "json or csv." in result.stdout
+    assert "Directory where backup .eml" in result.stdout
+    assert "files will be written." in result.stdout
+    assert "Maximum number of matching" in result.stdout
+    assert "messages to process." in result.stdout
+    assert "Only include messages on or" in result.stdout
+    assert "after YYYY-MM-DD." in result.stdout
+    assert "Only include messages before" in result.stdout
+    assert "YYYY-MM-DD." in result.stdout
+    assert "Filter by starred state: true" in result.stdout
+    assert "or false." in result.stdout
 
 
 def test_labels_command_outputs_json(monkeypatch) -> None:
@@ -346,19 +538,6 @@ def test_label_action_defaults_to_list(monkeypatch) -> None:
         "to_date": None,
         "starred": None,
     }
-
-
-def test_auth_check_command_outputs_status(monkeypatch) -> None:
-    fake_app = FakeApplication()
-    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
-    monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
-
-    result = CliRunner().invoke(app, ["auth-check"])
-
-    assert result.exit_code == 0
-    assert "auth_mode=oauth" in result.stdout
-    assert "gmail_user_id=me" in result.stdout
-    assert "label_count=2" in result.stdout
 
 
 def test_auth_subcommand_check_outputs_status(monkeypatch) -> None:
@@ -567,10 +746,10 @@ def test_labels_prints_setup_help_when_oauth_secret_missing(monkeypatch) -> None
     assert "/tmp/config/gmail-tool/client_secret.json" in result.stderr
 
 
-def test_read_prints_setup_help_when_oauth_secret_missing(monkeypatch) -> None:
+def test_message_read_prints_setup_help_when_oauth_secret_missing(monkeypatch) -> None:
     _mock_missing_oauth_setup(monkeypatch)
 
-    result = CliRunner().invoke(app, ["read", "abc123"])
+    result = CliRunner().invoke(app, ["message", "read", "abc123"])
 
     assert result.exit_code == 2
     assert "Gmail authentication is not configured yet." in result.stderr
@@ -597,12 +776,12 @@ def test_label_prints_setup_help_when_oauth_secret_missing(monkeypatch) -> None:
     assert "Docs:" in result.stderr
 
 
-def test_read_command_outputs_full_message(monkeypatch) -> None:
+def test_message_read_command_outputs_full_message(monkeypatch) -> None:
     fake_app = FakeApplication()
     monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
     monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
 
-    result = CliRunner().invoke(app, ["read", "abc123"])
+    result = CliRunner().invoke(app, ["message", "read", "abc123"])
 
     assert result.exit_code == 0
     assert "message_id=abc123" in result.stdout
@@ -611,6 +790,59 @@ def test_read_command_outputs_full_message(monkeypatch) -> None:
     assert "date=Mon, 01 Jan 2024 10:00:00 +0000" in result.stdout
     assert "subject=Hello" in result.stdout
     assert "Message body" in result.stdout
+
+
+def test_message_delete_requires_confirmation(monkeypatch) -> None:
+    fake_app = FakeApplication()
+    confirm_calls: list[str] = []
+
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+    monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
+
+    def fake_confirm(message: str, **kwargs) -> bool:
+        del kwargs
+        confirm_calls.append(message)
+        return True
+
+    monkeypatch.setattr("gmail_tool.cli.typer.confirm", fake_confirm)
+
+    result = CliRunner().invoke(app, ["message", "delete", "abc123"])
+
+    assert result.exit_code == 0
+    assert confirm_calls == ["Move message abc123 to Bin?"]
+    assert fake_app.last_call == {"message_id": "abc123", "delete": True}
+    assert result.stdout.strip() == "message_id=abc123 moved to Bin"
+
+
+def test_message_delete_can_be_forced_without_confirmation(monkeypatch) -> None:
+    fake_app = FakeApplication()
+
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+    monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
+    monkeypatch.setattr(
+        "gmail_tool.cli.typer.confirm",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not confirm")),
+    )
+
+    result = CliRunner().invoke(app, ["message", "delete", "abc123", "--force"])
+
+    assert result.exit_code == 0
+    assert fake_app.last_call == {"message_id": "abc123", "delete": True}
+    assert result.stdout.strip() == "message_id=abc123 moved to Bin"
+
+
+def test_message_delete_cancels_when_confirmation_is_rejected(monkeypatch) -> None:
+    fake_app = FakeApplication()
+
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+    monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
+    monkeypatch.setattr("gmail_tool.cli.typer.confirm", lambda *args, **kwargs: False)
+
+    result = CliRunner().invoke(app, ["message", "delete", "abc123"])
+
+    assert result.exit_code == 2
+    assert fake_app.last_call is None
+    assert "Cancelled." in result.stderr
 
 
 def test_search_command_passes_query_and_filters(monkeypatch) -> None:
@@ -806,6 +1038,107 @@ def test_search_backup_action_passes_backup_path(monkeypatch) -> None:
     assert "\rBacking up 1/1: 2024-01-01 10:00:00 | search-1 | from@example.com |" in result.stderr
 
 
+def test_search_backup_delete_requires_confirmation(monkeypatch) -> None:
+    fake_app = FakeApplication()
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+    monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
+    monkeypatch.setattr("gmail_tool.cli.typer.confirm", lambda *args, **kwargs: True)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "search",
+            "from:bob@example.com",
+            "--action",
+            "backup",
+            "--backup-path",
+            "/tmp/backups",
+            "--delete",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert fake_app.last_call["delete_after_backup"] is True
+
+
+def test_search_backup_delete_can_be_cancelled(monkeypatch) -> None:
+    fake_app = FakeApplication()
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+    monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
+    monkeypatch.setattr("gmail_tool.cli.typer.confirm", lambda *args, **kwargs: False)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "search",
+            "from:bob@example.com",
+            "--action",
+            "backup",
+            "--backup-path",
+            "/tmp/backups",
+            "--delete",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Cancelled." in result.stderr
+
+
+def test_search_backup_delete_force_skips_confirmation(monkeypatch) -> None:
+    fake_app = FakeApplication()
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+    monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
+    monkeypatch.setattr(
+        "gmail_tool.cli.typer.confirm",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not confirm")),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "search",
+            "from:bob@example.com",
+            "--action",
+            "backup",
+            "--backup-path",
+            "/tmp/backups",
+            "--delete",
+            "--force",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert fake_app.last_call["delete_after_backup"] is True
+
+
+def test_search_delete_requires_backup_action(monkeypatch) -> None:
+    fake_app = FakeApplication()
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+    monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
+
+    result = CliRunner().invoke(
+        app,
+        ["search", "from:bob@example.com", "--action", "count", "--delete"],
+    )
+
+    assert result.exit_code != 0
+    assert "--delete is only supported for the backup action" in result.stderr
+
+
+def test_search_force_requires_backup_delete(monkeypatch) -> None:
+    fake_app = FakeApplication()
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+    monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
+
+    result = CliRunner().invoke(
+        app,
+        ["search", "from:bob@example.com", "--action", "backup", "--force"],
+    )
+
+    assert result.exit_code != 0
+    assert "--force is only supported together with --delete for the backup action" in result.stderr
+
+
 def test_search_backup_path_rejects_non_backup_action(monkeypatch) -> None:
     fake_app = FakeApplication()
     monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
@@ -859,11 +1192,41 @@ def test_search_add_label_action_outputs_update_count(monkeypatch) -> None:
 
     result = CliRunner().invoke(
         app,
-        ["search", "from:bob@example.com", "--action", "label-add:FollowUp"],
+        ["search", "from:bob@example.com", "--action", "label-add", "--name", "FollowUp"],
     )
 
     assert result.exit_code == 0
     assert "2 messages updated" in result.stdout
+    assert fake_app.last_call["label_name"] == "FollowUp"
+    assert (
+        "\rApplying label-add 1/1: 2024-01-01 10:00:00 | search-1 | from@example.com |"
+        in result.stderr
+    )
+
+
+def test_search_label_add_requires_name(monkeypatch) -> None:
+    fake_app = FakeApplication()
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+    monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
+
+    result = CliRunner().invoke(app, ["search", "from:bob@example.com", "--action", "label-add"])
+
+    assert result.exit_code == 2
+    assert "--name is required for the label-add action" in result.stderr
+
+
+def test_search_name_rejected_for_non_label_action(monkeypatch) -> None:
+    fake_app = FakeApplication()
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+    monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
+
+    result = CliRunner().invoke(
+        app,
+        ["search", "from:bob@example.com", "--action", "count", "--name", "FollowUp"],
+    )
+
+    assert result.exit_code == 2
+    assert "--name is only supported for the label-add and label-remove actions" in result.stderr
 
 
 def test_search_command_rejects_unknown_saved_query(monkeypatch) -> None:
@@ -884,11 +1247,11 @@ def test_search_list_actions_outputs_supported_actions(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert result.stdout.splitlines() == [
-        "backup                     Back up matching messages as .eml files.",
-        "count                      Print the number of matching messages.",
-        "label-add:<label_name>     Add a label to all matching messages.",
-        "label-remove:<label_name>  Remove a label from all matching messages.",
-        "list                       List matching message headers.",
+        "backup        Back up matching messages as .eml files.",
+        "count         Print the number of matching messages.",
+        "label-add     Add a label to all matching messages.",
+        "label-remove  Remove a label from all matching messages.",
+        "list          List matching message headers.",
     ]
 
 
@@ -905,6 +1268,30 @@ def test_search_list_actions_does_not_load_settings(monkeypatch) -> None:
     assert "backup" in result.stdout
 
 
+def test_search_help_action_outputs_action_help_without_loading_settings(monkeypatch) -> None:
+    def fail_load_settings(path=None):
+        del path
+        raise AssertionError("search --help-action should not load settings")
+
+    monkeypatch.setattr("gmail_tool.cli.load_settings", fail_load_settings)
+
+    result = CliRunner().invoke(app, ["search", "--help-action", "backup"])
+
+    assert result.exit_code == 0
+    assert "Action: backup" in result.stdout
+    assert "--backup-path <DIR>" in result.stdout
+    assert "--delete" in result.stdout
+
+
+def test_search_help_action_reports_unknown_action(monkeypatch) -> None:
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+
+    result = CliRunner().invoke(app, ["search", "--help-action", "missing"])
+
+    assert result.exit_code == 2
+    assert "Unsupported action: missing" in result.stderr
+
+
 def test_label_list_actions_outputs_supported_actions(monkeypatch) -> None:
     monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
 
@@ -912,12 +1299,56 @@ def test_label_list_actions_outputs_supported_actions(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert result.stdout.splitlines() == [
-        "backup                     Back up matching messages as .eml files.",
-        "count                      Print the number of matching messages.",
-        "label-add:<label_name>     Add a label to all matching messages.",
-        "label-remove:<label_name>  Remove a label from all matching messages.",
-        "list                       List matching message headers.",
+        "backup        Back up matching messages as .eml files.",
+        "count         Print the number of matching messages.",
+        "label-add     Add a label to all matching messages.",
+        "label-remove  Remove a label from all matching messages.",
+        "list          List matching message headers.",
     ]
+
+
+def test_label_help_action_outputs_label_action_help_without_loading_settings(monkeypatch) -> None:
+    def fail_load_settings(path=None):
+        del path
+        raise AssertionError("label --help-action should not load settings")
+
+    monkeypatch.setattr("gmail_tool.cli.load_settings", fail_load_settings)
+
+    result = CliRunner().invoke(app, ["label", "--help-action", "label-add"])
+
+    assert result.exit_code == 0
+    assert "Action: label-add" in result.stdout
+    assert "--name <LABEL_NAME>" in result.stdout
+
+
+def test_label_add_requires_name(monkeypatch) -> None:
+    fake_app = FakeApplication()
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+    monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
+
+    result = CliRunner().invoke(app, ["label", "INBOX", "--action", "label-add"])
+
+    assert result.exit_code == 2
+    assert "--name is required for the label-add action" in result.stderr
+
+
+def test_label_remove_passes_name(monkeypatch) -> None:
+    fake_app = FakeApplication()
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+    monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
+
+    result = CliRunner().invoke(
+        app,
+        ["label", "INBOX", "--action", "label-remove", "--name", "Existing"],
+    )
+
+    assert result.exit_code == 0
+    assert fake_app.last_call["action"] == "label-remove"
+    assert fake_app.last_call["label_name"] == "Existing"
+    assert (
+        "\rApplying label-remove 1/1: 2024-01-01 10:00:00 | abc123 | from@example.com |"
+        in result.stderr
+    )
 
 
 def test_label_backup_action_passes_backup_path(monkeypatch) -> None:
@@ -950,6 +1381,29 @@ def test_label_backup_action_passes_backup_path(monkeypatch) -> None:
     assert "\rBacking up 1/1: 2024-01-01 10:00:00 | abc123 | from@example.com | Hello" in (
         result.stderr
     )
+
+
+def test_label_backup_delete_requires_confirmation(monkeypatch) -> None:
+    fake_app = FakeApplication()
+    monkeypatch.setattr("gmail_tool.cli.load_settings", lambda path=None: build_settings())
+    monkeypatch.setattr("gmail_tool.cli.build_application", lambda settings: fake_app)
+    monkeypatch.setattr("gmail_tool.cli.typer.confirm", lambda *args, **kwargs: True)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "label",
+            "INBOX",
+            "--action",
+            "backup",
+            "--backup-path",
+            "/tmp/backups",
+            "--delete",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert fake_app.last_call["delete_after_backup"] is True
 
 
 def test_backup_progress_truncates_to_terminal_width(monkeypatch) -> None:
@@ -1078,14 +1532,26 @@ def test_label_action_reports_unknown_label_cleanly(monkeypatch) -> None:
         *,
         label: str,
         action: str,
+        label_name: str | None = None,
         limit,
         from_date,
         to_date,
         starred,
         backup_path=None,
+        delete_after_backup: bool = False,
         progress_callback=None,
     ):
-        del action, limit, from_date, to_date, starred, backup_path, progress_callback
+        del (
+            action,
+            label_name,
+            limit,
+            from_date,
+            to_date,
+            starred,
+            backup_path,
+            delete_after_backup,
+            progress_callback,
+        )
         raise ValueError(f"Unknown label: {label}")
 
     fake_app.run_label_action = raise_unknown_label

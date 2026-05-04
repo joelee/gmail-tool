@@ -29,6 +29,7 @@ class FakeGateway:
         self.list_calls: list[tuple[str, str | None, int]] = []
         self.search_calls: list[tuple[str, int]] = []
         self.modify_calls: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
+        self.trash_calls: list[str] = []
         self.raw_message_calls: list[str] = []
 
     def count_messages(self, label: str, query: str | None) -> int:
@@ -101,6 +102,9 @@ class FakeGateway:
             b"Body",
             internal_date=1704276000000,
         )
+
+    def trash_message(self, message_id: str) -> None:
+        self.trash_calls.append(message_id)
 
 
 def build_settings(backup_path: Path | None = None) -> Settings:
@@ -274,6 +278,19 @@ def test_application_reads_message() -> None:
     )
 
 
+def test_application_deletes_message() -> None:
+    gateway = FakeGateway()
+    app = Application(
+        settings=build_settings(),
+        gateway=gateway,
+        action_registry=build_action_registry(),
+    )
+
+    app.delete_message("msg-1")
+
+    assert gateway.trash_calls == ["msg-1"]
+
+
 def test_application_searches_messages_with_filters() -> None:
     gateway = FakeGateway()
     app = Application(
@@ -335,7 +352,8 @@ def test_application_searches_with_add_label_action() -> None:
 
     lines = app.search_messages(
         query="from:bob@example.com",
-        action="label-add:FollowUp",
+        action="label-add",
+        label_name="FollowUp",
         limit=None,
         from_date=None,
         to_date=None,
@@ -373,3 +391,28 @@ def test_application_searches_with_backup_action(tmp_path: Path) -> None:
     assert lines == [f"1 messages written to {expected_root} (0 skipped)"]
     assert expected_file.exists()
     assert gateway.raw_message_calls == ["search-1"]
+
+
+def test_application_searches_with_backup_delete_action(tmp_path: Path) -> None:
+    gateway = FakeGateway()
+    backup_root = tmp_path / "backups"
+    app = Application(
+        settings=build_settings(backup_path=backup_root),
+        gateway=gateway,
+        action_registry=build_action_registry(default_backup_path=backup_root),
+    )
+
+    lines = app.search_messages(
+        query="from:bob@example.com",
+        action="backup",
+        limit=1,
+        from_date=None,
+        to_date=None,
+        starred=None,
+        backup_path=None,
+        delete_after_backup=True,
+    )
+
+    expected_root = backup_root.resolve()
+    assert lines == [f"1 messages written to {expected_root} (0 skipped, 1 moved to Bin)"]
+    assert gateway.trash_calls == ["search-1"]

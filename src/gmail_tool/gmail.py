@@ -67,6 +67,8 @@ class GmailGateway(Protocol):
 
     def get_raw_message(self, message_id: str) -> GmailRawMessage: ...
 
+    def trash_message(self, message_id: str) -> None: ...
+
 
 class GmailApiGateway:
     def __init__(self, service: Any, user_id: str) -> None:
@@ -221,6 +223,17 @@ class GmailApiGateway:
             message_id=message_id,
             raw_bytes=base64.urlsafe_b64decode(raw_data + padding),
             internal_date=int(response["internalDate"]),
+        )
+
+    def trash_message(self, message_id: str) -> None:
+        (
+            self._service.users()
+            .messages()
+            .trash(
+                userId=self._user_id,
+                id=message_id,
+            )
+            .execute()
         )
 
     def _fetch_header(self, message_id: str) -> GmailMessageHeader:

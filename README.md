@@ -8,21 +8,76 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://pypi.org/project/gmail-tool/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-CLI application for exploring Gmail labels and querying messages by label with configurable auth, actions, and filters.
+Search, inspect, label, and back up Gmail from the terminal with guided OAuth setup, shell-friendly output, and reusable Gmail queries.
 
-## Initial Features
+`gmail-tool` is built for fast mailbox exploration and repeatable command-line workflows. It works well for personal Gmail usage, local automation, and Google Workspace environments that need service account access.
+
+## Features
 
 - List Gmail labels
-- Run actions against a label
-- Actions:
-  - `count`: print the number of messages in the label
-  - `list`: print message headers (`recipient`, `sender`, `date`, `subject`) with `--limit`
-- Global filters:
-  - date range via `--from-date` and `--to-date`
-  - `--starred true|false`
-- Config-driven behavior via `config.toml`
-- Secrets loaded from `.env`
-- Docker packaging, pre-commit hooks, and GitHub Actions
+- Read full messages by Gmail message ID
+- Search Gmail with raw Gmail search operators
+- Reuse saved queries from `config.toml`
+- Run actions against either labels or search results: `list`, `count`, `backup`, `label-add --name <label_name>`, and `label-remove --name <label_name>`
+- Export labels and message lists as `json` or `csv`
+- Filter message results with `--from-date`, `--to-date`, and `--starred true|false`
+- Back up matching messages as resumable `.eml` files
+- Optionally move successfully backed-up messages to Gmail Bin with `--delete` and `--force`
+- Use guided auth helpers including `gmail-tool auth login`, `gmail-tool auth check`, `gmail-tool auth paths`, `gmail-tool auth logout`, and `gmail-tool auth login --no-browser`
+- Use OAuth desktop flow without requiring `config.toml`
+- Use service account auth for Google Workspace domain-wide delegation
+
+## Installation
+
+`gmail-tool` requires Python 3.12+.
+
+### pip
+
+```bash
+python -m pip install gmail-tool
+```
+
+Verify the install:
+
+```bash
+gmail-tool --version
+```
+
+### Homebrew
+
+```bash
+brew install joelee/oss/gmail-tool
+```
+
+Verify the install:
+
+```bash
+gmail-tool --version
+```
+
+## Quick Start
+
+For normal OAuth usage, `config.toml` is optional.
+
+1. In Google Cloud Console, create a Desktop OAuth client and enable the Gmail API.
+2. Save the downloaded client JSON to `~/.config/gmail-tool/client_secret.json`.
+3. Authenticate and verify access:
+
+```bash
+gmail-tool auth login
+gmail-tool auth check
+gmail-tool labels
+```
+
+If you are on a remote shell or headless machine, use `gmail-tool auth login --no-browser`.
+
+4. Run a real query:
+
+```bash
+gmail-tool search from:bob@example.com has:attachment
+```
+
+Full credential setup steps are in [Google Credentials](docs/google-credentials.md).
 
 ## Authentication
 
@@ -45,143 +100,135 @@ Useful helpers:
 - `gmail-tool auth logout`
 - `gmail-tool auth login --no-browser`
 
-Credential setup instructions are in `docs/google-credentials.md`.
+Default OAuth file locations when no overrides are set:
 
-## Quick Start
+- client secret: `${XDG_CONFIG_HOME:-~/.config}/gmail-tool/client_secret.json`
+- token: `${XDG_STATE_HOME:-~/.local/state}/gmail-tool/oauth-token.json`
 
-1. Install `uv`.
-2. For OAuth, place your Desktop OAuth client JSON at `~/.config/gmail-tool/client_secret.json`.
-3. Install dependencies:
-```bash
-uv sync --dev
-```
+Credential setup instructions are in [Google Credentials](docs/google-credentials.md).
 
-4. Log in:
-
-```bash
-uv run gmail-tool auth login
-uv run gmail-tool auth check
-uv run gmail-tool auth paths
-```
-
-5. List labels:
-
-```bash
-uv run gmail-tool labels
-```
+## Common Commands
 
 Show the CLI version:
 
 ```bash
-uv run gmail-tool --version
+gmail-tool --version
 ```
 
 Enable debug output to stderr:
 
 ```bash
-uv run gmail-tool --verbose labels
+gmail-tool --verbose labels
 ```
 
-Or as JSON:
+List labels as JSON:
 
 ```bash
-uv run gmail-tool labels -f json
+gmail-tool labels -f json
 ```
 
 Auth diagnostics:
 
 ```bash
-uv run gmail-tool auth-check
-uv run gmail-tool auth check
+gmail-tool auth check
 ```
 
 Read a full message by identifier:
 
 ```bash
-uv run gmail-tool read <MESSAGE_ID>
+gmail-tool message read <MESSAGE_ID>
+```
+
+Move a message to Bin:
+
+```bash
+gmail-tool message delete <MESSAGE_ID>
+gmail-tool message delete <MESSAGE_ID> --force
 ```
 
 Search with a raw Gmail query:
 
 ```bash
-uv run gmail-tool search from:bob@example.com has:attachment
+gmail-tool search from:bob@example.com has:attachment
 ```
 
 Count search matches:
 
 ```bash
-uv run gmail-tool search -a count from:bob@example.com
+gmail-tool search -a count from:bob@example.com
 ```
 
 Add a label to all search matches:
 
 ```bash
-uv run gmail-tool search -a label-add:FollowUp from:bob@example.com
+gmail-tool search -a label-add --name FollowUp from:bob@example.com
 ```
 
 List built-in search examples:
 
 ```bash
-uv run gmail-tool search --list-query-examples
+gmail-tool search --list-query-examples
 ```
 
 Print a Gmail search operator cheat sheet:
 
 ```bash
-uv run gmail-tool search --cheat-sheet
+gmail-tool search --cheat-sheet
 ```
 
 Run a saved query from `config.toml`:
 
 ```bash
-uv run gmail-tool search --saved-query recent_attachments
+gmail-tool search --saved-query recent_attachments
 ```
 
 Back up matching messages as `.eml` files:
 
 ```bash
-uv run gmail-tool search -a backup from:bob@example.com
-uv run gmail-tool search -a backup --backup-path /tmp/gmail-backups from:bob@example.com
+gmail-tool search -a backup from:bob@example.com
+gmail-tool search -a backup --backup-path /tmp/gmail-backups from:bob@example.com
+gmail-tool search -a backup --backup-path /tmp/gmail-backups --delete from:bob@example.com
+gmail-tool search -a backup --backup-path /tmp/gmail-backups --delete --force from:bob@example.com
 ```
 
-6. Count messages in a label:
+Count messages in a label:
 
 ```bash
-uv run gmail-tool label INBOX -a count
+gmail-tool label INBOX -a count
 ```
 
 `gmail-tool label <LABEL>` accepts either an exact Gmail label name such as `@Later` or an exact label ID such as `Label_66`.
 
-7. List messages in a label:
+List messages in a label:
 
 ```bash
-uv run gmail-tool label IMPORTANT -l 10 --starred true
+gmail-tool label IMPORTANT -l 10 --starred true
 ```
 
 Or export them as CSV:
 
 ```bash
-uv run gmail-tool label IMPORTANT -l 10 -f csv
+gmail-tool label IMPORTANT -l 10 -f csv
 ```
 
-Plain-text list output includes `message_id` values that can be passed to `read`.
+Plain-text list output includes `message_id` values that can be passed to `message read`.
 
 The `search` command returns the same message list structure as `label ... list`.
 
-Both `label` and `search` default to the `list` action. Use `--action` or `-a` to switch to `count`, `backup`, `label-add:<name>`, or `label-remove:<name>`.
+Both `label` and `search` default to the `list` action. Use `--action` or `-a` to switch to `count`, `backup`, `label-add --name <name>`, or `label-remove --name <name>`.
 
-The `label` command defaults to the `list` action. Use `--action count` or `-a count` to switch actions.
-
-8. List supported actions:
+List supported actions:
 
 ```bash
-uv run gmail-tool label --list-actions
-uv run gmail-tool search --list-actions
+gmail-tool label --list-actions
+gmail-tool search --list-actions
+gmail-tool search --help-action backup
+gmail-tool label --help-action label-add
 ```
 
 ## Configuration
 
-See `config.toml`, `.env.sample`, and `docs/configuration.md`.
+See `config.toml`, `.env.sample`, and [Configuration](docs/configuration.md).
 
 All commands accept `--config <path>` or `-c <path>`. If omitted, config discovery falls back through environment, XDG, home config, `/etc`, and the project directory. If no config file is found, built-in OAuth defaults are used.
 
@@ -204,7 +251,9 @@ Coverage artifacts produced by CI:
 
 PyPI publishing is handled by the GitHub Actions `Publish` workflow on version tags such as `v0.2.2`.
 
-Release packaging steps are documented in `docs/release/packaging.md`.
+Release packaging steps are documented in [Release Packaging](docs/release/packaging.md).
+
+Homebrew packaging steps are documented in [Homebrew Packaging](docs/release/homebrew.md).
 
 ### Live Gmail Integration Tests
 

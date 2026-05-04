@@ -7,7 +7,7 @@ ring_recent = "from:no-reply@rs.ring.com newer_than:7d"
 
 [auth]
 mode = "oauth"
-scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
+scopes = ["https://www.googleapis.com/auth/gmail.modify"]
 
 [auth.oauth]
 client_secret_env = "GOOGLE_OAUTH_CLIENT_SECRET_FILE"

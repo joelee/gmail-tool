@@ -37,16 +37,21 @@ class Application:
     def read_message(self, message_id: str) -> GmailMessage:
         return self.gateway.get_message(message_id)
 
+    def delete_message(self, message_id: str) -> None:
+        self.gateway.trash_message(message_id)
+
     def search_messages(
         self,
         *,
         action: str,
+        label_name: str | None = None,
         query: str,
         limit: int | None,
         from_date: str | None,
         to_date: str | None,
         starred: bool | None,
         backup_path: Path | None = None,
+        delete_after_backup: bool = False,
         progress_callback: Callable[[str | None], None] | None = None,
     ) -> list[str] | list[GmailMessageHeader]:
         filters = MessageFilters(
@@ -61,8 +66,35 @@ class Application:
             raw_query=query,
             filters=filters,
             limit=effective_limit,
+            label_name=label_name,
             backup_path=backup_path,
+            delete_after_backup=delete_after_backup,
             progress_callback=progress_callback,
+        )
+
+    def count_search_backup_deletions(
+        self,
+        *,
+        query: str,
+        limit: int | None,
+        from_date: str | None,
+        to_date: str | None,
+        starred: bool | None,
+        backup_path: Path | None = None,
+    ) -> int:
+        filters = MessageFilters(
+            from_date=parse_date(from_date),
+            to_date=parse_date(to_date),
+            starred=starred,
+        )
+        effective_limit = limit or self.settings.app.default_limit
+        return self.action_registry.count_backup_deletions(
+            self.gateway,
+            label=None,
+            raw_query=query,
+            filters=filters,
+            limit=effective_limit,
+            backup_path=backup_path,
         )
 
     def run_label_action(
@@ -70,11 +102,13 @@ class Application:
         *,
         label: str,
         action: str,
+        label_name: str | None = None,
         limit: int | None,
         from_date: str | None,
         to_date: str | None,
         starred: bool | None,
         backup_path: Path | None = None,
+        delete_after_backup: bool = False,
         progress_callback: Callable[[str | None], None] | None = None,
     ) -> list[str] | list[GmailMessageHeader]:
         filters = MessageFilters(
@@ -90,8 +124,36 @@ class Application:
             resolved_label,
             filters,
             limit=effective_limit,
+            label_name=label_name,
             backup_path=backup_path,
+            delete_after_backup=delete_after_backup,
             progress_callback=progress_callback,
+        )
+
+    def count_label_backup_deletions(
+        self,
+        *,
+        label: str,
+        limit: int | None,
+        from_date: str | None,
+        to_date: str | None,
+        starred: bool | None,
+        backup_path: Path | None = None,
+    ) -> int:
+        filters = MessageFilters(
+            from_date=parse_date(from_date),
+            to_date=parse_date(to_date),
+            starred=starred,
+        )
+        effective_limit = limit or self.settings.app.default_limit
+        resolved_label = self._resolve_label_id(label)
+        return self.action_registry.count_backup_deletions(
+            self.gateway,
+            label=resolved_label,
+            raw_query=None,
+            filters=filters,
+            limit=effective_limit,
+            backup_path=backup_path,
         )
 
     def _resolve_label_id(self, label: str) -> str:

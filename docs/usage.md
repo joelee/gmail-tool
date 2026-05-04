@@ -3,23 +3,23 @@
 ## Command Summary
 
 ```bash
-uv run gmail-tool --version
-uv run gmail-tool --verbose labels
-uv run gmail-tool labels
-uv run gmail-tool labels -f json
-uv run gmail-tool auth-check
-uv run gmail-tool auth login
-uv run gmail-tool auth check
-uv run gmail-tool auth paths
-uv run gmail-tool auth logout
-uv run gmail-tool read <MESSAGE_ID>
-uv run gmail-tool search <QUERY_PARTS...>
-uv run gmail-tool search --list-actions
-uv run gmail-tool search --list-query-examples
-uv run gmail-tool search --cheat-sheet
-uv run gmail-tool search --saved-query <NAME>
-uv run gmail-tool label --list-actions
-uv run gmail-tool label <LABEL> [OPTIONS]
+gmail-tool --version
+gmail-tool --verbose labels
+gmail-tool labels
+gmail-tool labels -f json
+gmail-tool auth login
+gmail-tool auth check
+gmail-tool auth paths
+gmail-tool auth logout
+gmail-tool message read <MESSAGE_ID>
+gmail-tool message delete <MESSAGE_ID>
+gmail-tool search <QUERY_PARTS...>
+gmail-tool search --list-actions
+gmail-tool search --list-query-examples
+gmail-tool search --cheat-sheet
+gmail-tool search --saved-query <NAME>
+gmail-tool label --list-actions
+gmail-tool label <LABEL> [OPTIONS]
 ```
 
 ## Commands
@@ -40,7 +40,7 @@ Most command options also support short aliases:
 ### List Labels
 
 ```bash
-uv run gmail-tool labels
+gmail-tool labels
 ```
 
 Prints all Gmail labels visible to the configured account.
@@ -48,15 +48,14 @@ Prints all Gmail labels visible to the configured account.
 Structured formats are also available:
 
 ```bash
-uv run gmail-tool labels -f json
-uv run gmail-tool labels -f csv
+gmail-tool labels -f json
+gmail-tool labels -f csv
 ```
 
 ### Auth Check
 
 ```bash
-uv run gmail-tool auth-check
-uv run gmail-tool auth check
+gmail-tool auth check
 ```
 
 Performs a lightweight read-only auth and Gmail reachability check.
@@ -64,7 +63,7 @@ Performs a lightweight read-only auth and Gmail reachability check.
 ### Auth Login
 
 ```bash
-uv run gmail-tool auth login
+gmail-tool auth login
 ```
 
 Starts the OAuth desktop browser flow and stores the refresh token locally.
@@ -72,13 +71,13 @@ Starts the OAuth desktop browser flow and stores the refresh token locally.
 Force a fresh browser login even if a token already exists:
 
 ```bash
-uv run gmail-tool auth login --force
+gmail-tool auth login --force
 ```
 
 Use a copy-paste console flow instead of opening a browser:
 
 ```bash
-uv run gmail-tool auth login --no-browser
+gmail-tool auth login --no-browser
 ```
 
 Default OAuth file locations when no overrides are set:
@@ -89,7 +88,7 @@ Default OAuth file locations when no overrides are set:
 ### Auth Paths
 
 ```bash
-uv run gmail-tool auth paths
+gmail-tool auth paths
 ```
 
 Prints the resolved auth mode, OAuth file locations, service account file path, and Gmail user ID.
@@ -97,7 +96,7 @@ Prints the resolved auth mode, OAuth file locations, service account file path, 
 ### Auth Logout
 
 ```bash
-uv run gmail-tool auth logout
+gmail-tool auth logout
 ```
 
 Deletes the locally stored OAuth token file without touching the client secret file.
@@ -110,18 +109,32 @@ gmail_user_id=me
 label_count=69
 ```
 
-### Read A Message
+### Message Read
 
 ```bash
-uv run gmail-tool read <MESSAGE_ID>
+gmail-tool message read <MESSAGE_ID>
 ```
 
 Prints the full message headers and decoded message body for the given Gmail message identifier.
 
+### Message Delete
+
+```bash
+gmail-tool message delete <MESSAGE_ID>
+```
+
+Moves the given Gmail message to Bin after prompting for confirmation.
+
+Skip the confirmation prompt:
+
+```bash
+gmail-tool message delete <MESSAGE_ID> --force
+```
+
 ### Search Messages
 
 ```bash
-uv run gmail-tool search <QUERY_PARTS...>
+gmail-tool search <QUERY_PARTS...>
 ```
 
 Runs a raw Gmail search query and lists matching messages with the same output structure as `label <LABEL> list`.
@@ -136,41 +149,47 @@ Supported options:
 - `--starred true|false`
 - `--saved-query <NAME>`
 - `--backup-path <DIR>` for `backup`
+- `--delete` for `backup` to move successfully written messages to Bin
+- `--force` with `--delete` for `backup` to skip the confirmation prompt
 - `--list-actions`
+- `--help-action <NAME>`
 - `--list-query-examples`
 - `--cheat-sheet`
 
 Mutation actions:
 
 - `backup`
-- `label-add:<label_name>`
-- `label-remove:<label_name>`
+- `label-add` with `--name <label_name>`
+- `label-remove` with `--name <label_name>`
 
 Examples:
 
 ```bash
-uv run gmail-tool search from:bob@example.com has:attachment
-uv run gmail-tool search newer_than:7d -f json
-uv run gmail-tool search subject:invoice --starred true -l 20
-uv run gmail-tool search --saved-query recent_attachments
-uv run gmail-tool search --saved-query ring_recent has:drive
-uv run gmail-tool search -a count from:bob@example.com
-uv run gmail-tool search -a backup from:bob@example.com
-uv run gmail-tool search -a backup --backup-path /tmp/gmail-backups from:bob@example.com
-uv run gmail-tool search -a label-add:FollowUp from:bob@example.com
-uv run gmail-tool search -a label-remove:Existing from:bob@example.com
+gmail-tool search from:bob@example.com has:attachment
+gmail-tool search newer_than:7d -f json
+gmail-tool search subject:invoice --starred true -l 20
+gmail-tool search --saved-query recent_attachments
+gmail-tool search --saved-query ring_recent has:drive
+gmail-tool search -a count from:bob@example.com
+gmail-tool search -a backup from:bob@example.com
+gmail-tool search -a backup --backup-path /tmp/gmail-backups from:bob@example.com
+gmail-tool search -a backup --backup-path /tmp/gmail-backups --delete from:bob@example.com
+gmail-tool search -a backup --backup-path /tmp/gmail-backups --delete --force from:bob@example.com
+gmail-tool search --help-action backup
+gmail-tool search -a label-add --name FollowUp from:bob@example.com
+gmail-tool search -a label-remove --name Existing from:bob@example.com
 ```
 
 Built-in query examples:
 
 ```bash
-uv run gmail-tool search --list-query-examples
+gmail-tool search --list-query-examples
 ```
 
 Operator cheat sheet:
 
 ```bash
-uv run gmail-tool search --cheat-sheet
+gmail-tool search --cheat-sheet
 ```
 
 The same content is also available in `docs/search-cheat-sheet.md`.
@@ -178,8 +197,10 @@ The same content is also available in `docs/search-cheat-sheet.md`.
 ### List Supported Actions
 
 ```bash
-uv run gmail-tool label --list-actions
-uv run gmail-tool search --list-actions
+gmail-tool label --list-actions
+gmail-tool search --list-actions
+gmail-tool search --help-action backup
+gmail-tool label --help-action label-add
 ```
 
 Current actions:
@@ -187,15 +208,15 @@ Current actions:
 ```text
 backup                     Back up matching messages as .eml files.
 count                      Print the number of matching messages.
-label-add:<label_name>     Add a label to all matching messages.
-label-remove:<label_name>  Remove a label from all matching messages.
+label-add                  Add a label to all matching messages.
+label-remove               Remove a label from all matching messages.
 list                       List matching message headers.
 ```
 
 ### Run A Label Action
 
 ```bash
-uv run gmail-tool label <LABEL> [OPTIONS]
+gmail-tool label <LABEL> [OPTIONS]
 ```
 
 `<LABEL>` may be either an exact Gmail label name, such as `@Later`, or an exact Gmail label ID, such as `Label_66`.
@@ -203,7 +224,11 @@ uv run gmail-tool label <LABEL> [OPTIONS]
 Supported options:
 
 - `--action <NAME>` or `-a <NAME>`. Defaults to `list`.
+- `--name <LABEL_NAME>` for `label-add` and `label-remove`
+- `--help-action <NAME>`
 - `--backup-path <DIR>` for `backup`
+- `--delete` for `backup` to move successfully written messages to Bin
+- `--force` with `--delete` for `backup` to skip the confirmation prompt
 - `--limit <N>` or `-l <N>` for actions that return message rows. If omitted, the default is `100`.
 - `--from-date YYYY-MM-DD`
 - `--to-date YYYY-MM-DD`
@@ -224,80 +249,82 @@ Short forms:
 Count all messages in `INBOX`:
 
 ```bash
-uv run gmail-tool label INBOX -a count
+gmail-tool label INBOX -a count
 ```
 
 Back up matching messages in `INBOX`:
 
 ```bash
-uv run gmail-tool label INBOX -a backup
-uv run gmail-tool label INBOX -a backup --backup-path /tmp/gmail-backups
+gmail-tool label INBOX -a backup
+gmail-tool label INBOX -a backup --backup-path /tmp/gmail-backups
+gmail-tool label INBOX -a backup --backup-path /tmp/gmail-backups --delete
+gmail-tool label INBOX -a backup --backup-path /tmp/gmail-backups --delete --force
 ```
 
 Count starred messages in `IMPORTANT` since a date:
 
 ```bash
-uv run gmail-tool label IMPORTANT -a count --from-date 2026-01-01 --starred true
+gmail-tool label IMPORTANT -a count --from-date 2026-01-01 --starred true
 ```
 
 Add a label to all matching messages in `INBOX`:
 
 ```bash
-uv run gmail-tool label INBOX -a label-add:FollowUp
+gmail-tool label INBOX -a label-add --name FollowUp
 ```
 
 Remove a label from all matching messages in `INBOX`:
 
 ```bash
-uv run gmail-tool label INBOX -a label-remove:Existing
+gmail-tool label INBOX -a label-remove --name Existing
 ```
 
 List the latest five message headers in `INBOX`:
 
 ```bash
-uv run gmail-tool label INBOX -l 5
+gmail-tool label INBOX -l 5
 ```
 
 The plain-text output includes `message_id=...` so you can read a specific message:
 
 ```bash
-uv run gmail-tool read <MESSAGE_ID>
+gmail-tool message read <MESSAGE_ID>
 ```
 
 Search for recent attachment emails and export them as CSV:
 
 ```bash
-uv run gmail-tool search has:attachment newer_than:30d -f csv
+gmail-tool search has:attachment newer_than:30d -f csv
 ```
 
 Run a saved query from `config.toml`:
 
 ```bash
-uv run gmail-tool search --saved-query recent_attachments
+gmail-tool search --saved-query recent_attachments
 ```
 
 Count search matches without listing them:
 
 ```bash
-uv run gmail-tool search -a count from:bob@example.com
+gmail-tool search -a count from:bob@example.com
 ```
 
 List the latest five message headers in JSON:
 
 ```bash
-uv run gmail-tool label INBOX -l 5 -f json
+gmail-tool label INBOX -l 5 -f json
 ```
 
 Export label names as CSV:
 
 ```bash
-uv run gmail-tool labels -f csv
+gmail-tool labels -f csv
 ```
 
 List non-starred messages in a custom label within a date window:
 
 ```bash
-uv run gmail-tool label JW/Receipts --from-date 2026-01-01 --to-date 2026-01-31 --starred false -l 10
+gmail-tool label JW/Receipts --from-date 2026-01-01 --to-date 2026-01-31 --starred false -l 10
 ```
 
 ## Notes
@@ -307,11 +334,16 @@ uv run gmail-tool label JW/Receipts --from-date 2026-01-01 --to-date 2026-01-31 
 - `--config <path>` or `-c <path>` overrides config discovery for any command.
 - `config.toml` is optional for the normal OAuth flow.
 - `--list-actions` works on both `label` and `search` and does not require Gmail authentication because it reads from the local action registry.
+- `--help-action <name>` works on both `label` and `search` and does not require Gmail authentication because it reads from the local action registry.
 - `--format json|csv` is supported for `labels` and `label <LABEL> list`.
 - `label <LABEL> list` includes a `message_id` field in text, JSON, and CSV output.
+- `message delete` moves the selected message to Gmail Bin and prompts unless `--force` is used.
 - `label <LABEL>` accepts an exact Gmail label name or an exact Gmail label ID.
 - `backup` writes `.eml` files to `YYYY/MM-DD/YYYYMMDD-HHmmss-<message_id>.eml` under the configured backup root.
 - `backup` skips already backed-up `message_id` values so interrupted runs can resume efficiently.
+- `backup --delete` moves each successfully written message to the Gmail Bin after the file is created.
+- `backup --delete` prompts before deleting, and `--force` bypasses that confirmation.
+- Long-running batch actions such as `backup`, `label-add`, and `label-remove` print a single-line progress update per message to stderr.
 - `search` accepts raw Gmail query arguments and supports the same `--limit`, `--format`, and global filters as message listing.
 - `search --list-query-examples` prints built-in Gmail query examples without accessing Gmail.
 - `search --cheat-sheet` prints a quick Gmail operator reference without accessing Gmail.
