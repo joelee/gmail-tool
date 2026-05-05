@@ -148,6 +148,7 @@ Supported options:
 - `--to-date YYYY-MM-DD`
 - `--starred true|false`
 - `--saved-query <NAME>`
+- `--force` with `delete` to skip the confirmation prompt
 - `--backup-path <DIR>` for `backup`
 - `--delete` for `backup` to move successfully written messages to Bin
 - `--force` with `--delete` for `backup` to skip the confirmation prompt
@@ -159,6 +160,7 @@ Supported options:
 Mutation actions:
 
 - `backup`
+- `delete`
 - `label-add` with `--name <label_name>`
 - `label-remove` with `--name <label_name>`
 
@@ -171,11 +173,14 @@ gmail-tool search subject:invoice --starred true -l 20
 gmail-tool search --saved-query recent_attachments
 gmail-tool search --saved-query ring_recent has:drive
 gmail-tool search -a count from:bob@example.com
+gmail-tool search -a delete from:bob@example.com
+gmail-tool search -a delete --force from:bob@example.com
 gmail-tool search -a backup from:bob@example.com
 gmail-tool search -a backup --backup-path /tmp/gmail-backups from:bob@example.com
 gmail-tool search -a backup --backup-path /tmp/gmail-backups --delete from:bob@example.com
 gmail-tool search -a backup --backup-path /tmp/gmail-backups --delete --force from:bob@example.com
 gmail-tool search --help-action backup
+gmail-tool search --help-action delete
 gmail-tool search -a label-add --name FollowUp from:bob@example.com
 gmail-tool search -a label-remove --name Existing from:bob@example.com
 ```
@@ -208,6 +213,7 @@ Current actions:
 ```text
 backup                     Back up matching messages as .eml files.
 count                      Print the number of matching messages.
+delete                     Move all matching messages to Bin.
 label-add                  Add a label to all matching messages.
 label-remove               Remove a label from all matching messages.
 list                       List matching message headers.
@@ -226,6 +232,7 @@ Supported options:
 - `--action <NAME>` or `-a <NAME>`. Defaults to `list`.
 - `--name <LABEL_NAME>` for `label-add` and `label-remove`
 - `--help-action <NAME>`
+- `--force` with `delete` to skip the confirmation prompt
 - `--backup-path <DIR>` for `backup`
 - `--delete` for `backup` to move successfully written messages to Bin
 - `--force` with `--delete` for `backup` to skip the confirmation prompt
@@ -250,6 +257,8 @@ Count all messages in `INBOX`:
 
 ```bash
 gmail-tool label INBOX -a count
+gmail-tool label INBOX -a delete
+gmail-tool label INBOX -a delete --force
 ```
 
 Back up matching messages in `INBOX`:
@@ -339,11 +348,13 @@ gmail-tool label JW/Receipts --from-date 2026-01-01 --to-date 2026-01-31 --starr
 - `label <LABEL> list` includes a `message_id` field in text, JSON, and CSV output.
 - `message delete` moves the selected message to Gmail Bin and prompts unless `--force` is used.
 - `label <LABEL>` accepts an exact Gmail label name or an exact Gmail label ID.
+- `delete` moves each matching message to the Gmail Bin.
+- `delete` prompts before deleting, and `--force` bypasses that confirmation.
 - `backup` writes `.eml` files to `YYYY/MM-DD/YYYYMMDD-HHmmss-<message_id>.eml` under the configured backup root.
 - `backup` skips already backed-up `message_id` values so interrupted runs can resume efficiently.
 - `backup --delete` moves each successfully written message to the Gmail Bin after the file is created.
 - `backup --delete` prompts before deleting, and `--force` bypasses that confirmation.
-- Long-running batch actions such as `backup`, `label-add`, and `label-remove` print a single-line progress update per message to stderr.
+- Long-running batch actions such as `backup`, `delete`, `label-add`, and `label-remove` print a single-line progress update per message to stderr.
 - `search` accepts raw Gmail query arguments and supports the same `--limit`, `--format`, and global filters as message listing.
 - `search --list-query-examples` prints built-in Gmail query examples without accessing Gmail.
 - `search --cheat-sheet` prints a quick Gmail operator reference without accessing Gmail.

@@ -364,8 +364,14 @@ def _validate_backup_path(action: str, backup_path: Path | None) -> None:
 def _validate_backup_delete_flags(action: str, *, delete: bool, force: bool) -> None:
     if delete and action != "backup":
         _exit_with_error("--delete is only supported for the backup action")
-    if force and (action != "backup" or not delete):
-        _exit_with_error("--force is only supported together with --delete for the backup action")
+    if force and action not in {"backup", "delete"}:
+        _exit_with_error(
+            "--force is only supported with --action delete or with --action backup --delete"
+        )
+    if force and action == "backup" and not delete:
+        _exit_with_error(
+            "--force is only supported with --action delete or with --action backup --delete"
+        )
 
 
 def _validate_label_name_option(action: str, label_name: str | None) -> None:
@@ -381,6 +387,15 @@ def _confirm_backup_delete(count: int) -> None:
         typer.echo("No newly written messages would be moved to Bin.", err=True)
         return
     confirmed = typer.confirm(f"{count} messages will be moved to Bin after backup. Continue?")
+    if not confirmed:
+        _exit_with_error("Cancelled.")
+
+
+def _confirm_delete(count: int) -> None:
+    if count <= 0:
+        typer.echo("No messages would be moved to Bin.", err=True)
+        return
+    confirmed = typer.confirm(f"{count} messages will be moved to Bin. Continue?")
     if not confirmed:
         _exit_with_error("Cancelled.")
 
@@ -544,7 +559,7 @@ def search_messages(
     action: Annotated[
         str,
         typer.Option(
-            "--action", "-a", help="Action to run: list, count, backup, or label mutation."
+            "--action", "-a", help="Action to run: list, count, delete, backup, or label mutation."
         ),
     ] = "list",
     label_name: Annotated[
@@ -650,6 +665,15 @@ def search_messages(
                 backup_path=backup_path,
             )
             _confirm_backup_delete(delete_count)
+        if action == "delete" and not force:
+            delete_count = application.count_search_delete_matches(
+                query=query,
+                limit=limit,
+                from_date=from_date,
+                to_date=to_date,
+                starred=_parse_starred(starred),
+            )
+            _confirm_delete(delete_count)
         progress_callback = (
             _build_backup_progress_reporter() if _should_report_batch_progress(action) else None
         )
@@ -706,7 +730,7 @@ def label_action(
     action: Annotated[
         str,
         typer.Option(
-            "--action", "-a", help="Action to run: list, count, backup, or label mutation."
+            "--action", "-a", help="Action to run: list, count, delete, backup, or label mutation."
         ),
     ] = "list",
     label_name: Annotated[
@@ -791,6 +815,15 @@ def label_action(
                 backup_path=backup_path,
             )
             _confirm_backup_delete(delete_count)
+        if action == "delete" and not force:
+            delete_count = application.count_label_delete_matches(
+                label=label,
+                limit=limit,
+                from_date=from_date,
+                to_date=to_date,
+                starred=_parse_starred(starred),
+            )
+            _confirm_delete(delete_count)
         progress_callback = (
             _build_backup_progress_reporter() if _should_report_batch_progress(action) else None
         )

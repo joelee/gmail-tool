@@ -116,20 +116,151 @@ runtime_resources = [
     "urllib3",
 ]
 
-resource_lines: list[str] = []
+python_wheel_tags = [
+    "cp314-cp314",
+    "cp314-abi3",
+    "cp313-abi3",
+    "cp312-abi3",
+    "cp311-abi3",
+    "cp310-abi3",
+    "cp39-abi3",
+    "cp38-abi3",
+]
+
+platform_wheel_tokens = {
+    "macos_arm": ["macosx_11_0_arm64", "macosx_10_15_universal2", "macosx_10_9_universal2"],
+    "macos_intel": ["macosx_10_13_x86_64", "macosx_10_15_universal2", "macosx_10_9_universal2"],
+    "linux_arm": ["manylinux2014_aarch64", "manylinux_2_17_aarch64", "manylinux_2_28_aarch64"],
+    "linux_intel": ["manylinux2014_x86_64", "manylinux_2_17_x86_64", "manylinux_2_28_x86_64"],
+}
+
+
+def filename_for(artifact: dict[str, str]) -> str:
+    return artifact["url"].rsplit("/", 1)[1]
+
+
+def _python_tag_rank(filename: str) -> int:
+    for index, tag in enumerate(python_wheel_tags):
+        if tag in filename:
+            return index
+    return len(python_wheel_tags)
+
+
+def _render_resource(name: str, artifact: dict[str, str], *, indent: int) -> list[str]:
+    prefix = "  " * indent
+    inner_prefix = "  " * (indent + 1)
+    sha256 = artifact["hash"].split(":", 1)[1]
+    return [
+        f'{prefix}resource "{name}" do',
+        f'{inner_prefix}url "{artifact["url"]}"',
+        f'{inner_prefix}sha256 "{sha256}"',
+        f"{prefix}end",
+        "",
+    ]
+
+
+def _select_pure_wheel(package: dict[str, object]) -> dict[str, str] | None:
+    wheels = package.get("wheels", [])
+    for suffix in ("-py3-none-any.whl", "-py2.py3-none-any.whl"):
+        for wheel in wheels:
+            if filename_for(wheel).endswith(suffix):
+                return wheel
+    return None
+
+
+def _select_platform_wheel(package: dict[str, object], *, target: str) -> dict[str, str] | None:
+    best: dict[str, str] | None = None
+    best_key: tuple[int, int, str] | None = None
+    for wheel in package.get("wheels", []):
+        filename = filename_for(wheel)
+        if "cp314t" in filename:
+            continue
+        for token_index, token in enumerate(platform_wheel_tokens[target]):
+            if token in filename:
+                candidate_key = (token_index, _python_tag_rank(filename), filename)
+                if best_key is None or candidate_key < best_key:
+                    best = wheel
+                    best_key = candidate_key
+                break
+    return best
+
+
+top_level_resources: list[tuple[str, dict[str, str]]] = []
+macos_shared_resources: list[tuple[str, dict[str, str]]] = []
+macos_arm_resources: list[tuple[str, dict[str, str]]] = []
+macos_intel_resources: list[tuple[str, dict[str, str]]] = []
+linux_shared_resources: list[tuple[str, dict[str, str]]] = []
+linux_arm_resources: list[tuple[str, dict[str, str]]] = []
+linux_intel_resources: list[tuple[str, dict[str, str]]] = []
+
 for name in runtime_resources:
     package = packages[name]
-    sdist = package["sdist"]
-    sha256 = sdist["hash"].split(":", 1)[1]
-    resource_lines.extend(
-        [
-            f'  resource "{name}" do',
-            f'    url "{sdist["url"]}"',
-            f'    sha256 "{sha256}"',
-            "  end",
-            "",
-        ]
-    )
+    pure_wheel = _select_pure_wheel(package)
+    if pure_wheel is not None:
+        top_level_resources.append((name, pure_wheel))
+        continue
+
+    macos_arm = _select_platform_wheel(package, target="macos_arm")
+    macos_intel = _select_platform_wheel(package, target="macos_intel")
+    linux_arm = _select_platform_wheel(package, target="linux_arm")
+    linux_intel = _select_platform_wheel(package, target="linux_intel")
+
+    if any(artifact is None for artifact in [macos_arm, macos_intel, linux_arm, linux_intel]):
+        raise SystemExit(f"Could not resolve Homebrew wheel resources for {name}")
+
+    if macos_arm["url"] == macos_intel["url"]:
+        macos_shared_resources.append((name, macos_arm))
+    else:
+        macos_arm_resources.append((name, macos_arm))
+        macos_intel_resources.append((name, macos_intel))
+
+    if linux_arm["url"] == linux_intel["url"]:
+        linux_shared_resources.append((name, linux_arm))
+    else:
+        linux_arm_resources.append((name, linux_arm))
+        linux_intel_resources.append((name, linux_intel))
+
+resource_lines: list[str] = []
+for name, artifact in top_level_resources:
+    resource_lines.extend(_render_resource(name, artifact, indent=1))
+
+if any([macos_shared_resources, macos_arm_resources, macos_intel_resources]):
+    resource_lines.append("  on_macos do")
+    for name, artifact in macos_shared_resources:
+        resource_lines.extend(_render_resource(name, artifact, indent=2))
+    if macos_arm_resources:
+        resource_lines.append("    on_arm do")
+        for name, artifact in macos_arm_resources:
+            resource_lines.extend(_render_resource(name, artifact, indent=3))
+        resource_lines.append("    end")
+        resource_lines.append("")
+    if macos_intel_resources:
+        resource_lines.append("    on_intel do")
+        for name, artifact in macos_intel_resources:
+            resource_lines.extend(_render_resource(name, artifact, indent=3))
+        resource_lines.append("    end")
+        resource_lines.append("")
+    resource_lines.append("  end")
+    resource_lines.append("")
+
+if any([linux_shared_resources, linux_arm_resources, linux_intel_resources]):
+    resource_lines.append("  on_linux do")
+    for name, artifact in linux_shared_resources:
+        resource_lines.extend(_render_resource(name, artifact, indent=2))
+    if linux_arm_resources:
+        resource_lines.append("    on_arm do")
+        for name, artifact in linux_arm_resources:
+            resource_lines.extend(_render_resource(name, artifact, indent=3))
+        resource_lines.append("    end")
+        resource_lines.append("")
+    if linux_intel_resources:
+        resource_lines.append("    on_intel do")
+        for name, artifact in linux_intel_resources:
+            resource_lines.extend(_render_resource(name, artifact, indent=3))
+        resource_lines.append("    end")
+        resource_lines.append("")
+    resource_lines.append("  end")
+    resource_lines.append("")
 
 resource_block = "\n".join(resource_lines).rstrip()
 

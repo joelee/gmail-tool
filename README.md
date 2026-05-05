@@ -18,7 +18,7 @@ Search, inspect, label, and back up Gmail from the terminal with guided OAuth se
 - Read full messages by Gmail message ID
 - Search Gmail with raw Gmail search operators
 - Reuse saved queries from `config.toml`
-- Run actions against either labels or search results: `list`, `count`, `backup`, `label-add --name <label_name>`, and `label-remove --name <label_name>`
+- Run actions against either labels or search results: `list`, `count`, `delete`, `backup`, `label-add --name <label_name>`, and `label-remove --name <label_name>`
 - Export labels and message lists as `json` or `csv`
 - Filter message results with `--from-date`, `--to-date`, and `--starred true|false`
 - Back up matching messages as resumable `.eml` files
@@ -215,7 +215,7 @@ Plain-text list output includes `message_id` values that can be passed to `messa
 
 The `search` command returns the same message list structure as `label ... list`.
 
-Both `label` and `search` default to the `list` action. Use `--action` or `-a` to switch to `count`, `backup`, `label-add --name <name>`, or `label-remove --name <name>`.
+Both `label` and `search` default to the `list` action. Use `--action` or `-a` to switch to `count`, `delete`, `backup`, `label-add --name <name>`, or `label-remove --name <name>`.
 
 List supported actions:
 

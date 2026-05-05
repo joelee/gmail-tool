@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v0.3.1 - 2026-05-05
+
+- Added a first-class `delete` action for both `gmail-tool search` and `gmail-tool label`, with confirmation by default, `--force` support, and single-line progress output while moving matching messages to Gmail Bin.
+- Fixed Homebrew formula generation to prefer wheel resources over sdists, avoiding native source-build failures such as `cryptography` requiring `maturin` during install.
+
 ## v0.3.0 - 2026-05-04
 
 - Improved `README.md` onboarding with clearer product positioning, current feature coverage, pip and Homebrew install instructions, and a more direct quick-start flow.

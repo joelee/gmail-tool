@@ -41,7 +41,8 @@ scripts/update-homebrew-formula.sh vX.Y.Z
 ```
 
 4. Refresh Python resource blocks so the formula matches the published package dependencies.
-5. Validate on macOS:
+5. Confirm native dependencies use wheel resources instead of sdists, especially `cryptography` and `cffi`.
+6. Validate on macOS:
 
 ```bash
 brew install --build-from-source joelee/oss/gmail-tool
@@ -50,5 +51,7 @@ brew audit --strict joelee/oss/gmail-tool
 ```
 
 Homebrew formula tests must stay credential-free. Prefer `gmail-tool --version` or `gmail-tool --help` for formula verification.
+
+When a resource is emitted as an sdist, Homebrew may force a source build inside the formula virtualenv. For native packages this can pull in extra build backends such as `maturin` and fail even though suitable wheels exist on PyPI.
 
 `scripts/update-homebrew-formula.sh` writes to `HOMEBREW_FORMULA_PATH` when that environment variable is set. Otherwise it falls back to `../homebrew-oss/Formula/gmail-tool.rb`.

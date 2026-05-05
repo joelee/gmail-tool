@@ -17,6 +17,8 @@ This repository contains a `uv` managed Python CLI for Gmail label exploration a
 - When the repository is under git, use `git mv` to move completed plan files into `docs/plan/done/`.
 - Record every new user-visible change under the `CHANGELOG.md` `Unreleased` section.
 - Keep test coverage above 60%.
+- Ensure every update is Ruff formatted before considering the work complete.
+- When adding new packages, check whether they are compatible with the project's non-GIL Python support target and prefer dependencies with working free-threaded wheels or a validated source-build path.
 
 ## Release Workflow
 

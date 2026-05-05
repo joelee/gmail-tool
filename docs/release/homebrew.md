@@ -28,4 +28,6 @@ brew audit --strict joelee/oss/gmail-tool
 
 The helper script reads the published PyPI sdist URL and checksum and regenerates the Python resource blocks from `uv.lock`.
 
+For Python dependencies, the generated formula should prefer wheel artifacts over sdists. This is especially important for native dependencies such as `cryptography` and `cffi`, which can fail in Homebrew when forced down a source-build path.
+
 Set `HOMEBREW_FORMULA_PATH` to override the default output path. If it is unset, the script falls back to `../homebrew-oss/Formula/gmail-tool.rb`.

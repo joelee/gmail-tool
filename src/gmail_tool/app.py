@@ -156,6 +156,53 @@ class Application:
             backup_path=backup_path,
         )
 
+    def count_search_delete_matches(
+        self,
+        *,
+        query: str,
+        limit: int | None,
+        from_date: str | None,
+        to_date: str | None,
+        starred: bool | None,
+    ) -> int:
+        filters = MessageFilters(
+            from_date=parse_date(from_date),
+            to_date=parse_date(to_date),
+            starred=starred,
+        )
+        effective_limit = limit or self.settings.app.default_limit
+        return self.action_registry.count_matching_messages(
+            self.gateway,
+            label=None,
+            raw_query=query,
+            filters=filters,
+            limit=effective_limit,
+        )
+
+    def count_label_delete_matches(
+        self,
+        *,
+        label: str,
+        limit: int | None,
+        from_date: str | None,
+        to_date: str | None,
+        starred: bool | None,
+    ) -> int:
+        filters = MessageFilters(
+            from_date=parse_date(from_date),
+            to_date=parse_date(to_date),
+            starred=starred,
+        )
+        effective_limit = limit or self.settings.app.default_limit
+        resolved_label = self._resolve_label_id(label)
+        return self.action_registry.count_matching_messages(
+            self.gateway,
+            label=resolved_label,
+            raw_query=None,
+            filters=filters,
+            limit=effective_limit,
+        )
+
     def _resolve_label_id(self, label: str) -> str:
         labels = self.gateway.list_labels()
 

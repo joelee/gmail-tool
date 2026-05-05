@@ -167,6 +167,45 @@ class BackupAction:
         return [f"{written} messages written to {root} ({skipped} skipped)"]
 
 
+@dataclass
+class DeleteAction:
+    name: str = "delete"
+    description: str = "Move all matching messages to Bin."
+
+    def run(
+        self,
+        gateway: GmailGateway,
+        scope: ActionScope,
+        filters: MessageFilters,
+        *,
+        limit: int,
+        label_name: str | None = None,
+        backup_path: Path | None = None,
+        delete_after_backup: bool = False,
+        progress_callback: Callable[[str | None], None] | None = None,
+    ) -> list[str]:
+        del label_name
+        del backup_path
+        del delete_after_backup
+        message_ids = gateway.list_message_ids(scope.label, scope.combined_query(filters))[:limit]
+        total = len(message_ids)
+        for index, message_id in enumerate(message_ids, start=1):
+            if progress_callback is not None:
+                raw_message = gateway.get_raw_message(message_id)
+                progress_callback(
+                    _format_batch_progress_message(
+                        verb="Deleting",
+                        index=index,
+                        total=total,
+                        raw_message=raw_message,
+                    )
+                )
+            gateway.trash_message(message_id)
+        if progress_callback is not None and total > 0:
+            progress_callback(None)
+        return [f"{len(message_ids)} messages moved to Bin"]
+
+
 class LabelMutationAction:
     def __init__(self, name: str, *, remove: bool) -> None:
         self.name = name
@@ -238,6 +277,7 @@ class ActionRegistry:
         self._actions = {action.name: action for action in actions}
         self._backup_action = BackupAction(default_backup_path=default_backup_path)
         self._actions["backup"] = self._backup_action
+        self._actions["delete"] = DeleteAction()
         self._label_mutation_actions = {
             action.name: action
             for action in [
@@ -338,6 +378,18 @@ class ActionRegistry:
         scope = ActionScope(label=label, raw_query=raw_query)
         message_ids = gateway.list_message_ids(scope.label, scope.combined_query(filters))[:limit]
         return sum(1 for message_id in message_ids if message_id not in existing_ids)
+
+    def count_matching_messages(
+        self,
+        gateway: GmailGateway,
+        *,
+        label: str | None,
+        raw_query: str | None,
+        filters: MessageFilters,
+        limit: int,
+    ) -> int:
+        scope = ActionScope(label=label, raw_query=raw_query)
+        return len(gateway.list_message_ids(scope.label, scope.combined_query(filters))[:limit])
 
     def _run(
         self,

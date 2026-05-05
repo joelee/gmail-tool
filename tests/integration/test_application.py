@@ -367,6 +367,27 @@ def test_application_searches_with_add_label_action() -> None:
     ]
 
 
+def test_application_searches_with_delete_action() -> None:
+    gateway = FakeGateway()
+    app = Application(
+        settings=build_settings(),
+        gateway=gateway,
+        action_registry=build_action_registry(),
+    )
+
+    lines = app.search_messages(
+        query="from:bob@example.com",
+        action="delete",
+        limit=None,
+        from_date=None,
+        to_date=None,
+        starred=None,
+    )
+
+    assert lines == ["2 messages moved to Bin"]
+    assert gateway.trash_calls == ["search-1", "search-2"]
+
+
 def test_application_searches_with_backup_action(tmp_path: Path) -> None:
     gateway = FakeGateway()
     backup_root = tmp_path / "backups"

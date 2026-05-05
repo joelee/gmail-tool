@@ -260,16 +260,76 @@ def test_label_remove_action_reports_progress_for_each_message() -> None:
     ]
 
 
+def test_delete_action_moves_matching_search_messages_to_bin() -> None:
+    gateway = FakeGateway()
+    registry = build_action_registry()
+
+    result = registry.run_for_search(
+        "delete",
+        gateway,
+        raw_query="from:bob@example.com",
+        filters=MessageFilters(),
+        limit=10,
+    )
+
+    assert result == ["2 messages moved to Bin"]
+    assert gateway.trash_calls == ["search-1", "search-2"]
+
+
+def test_delete_action_reports_progress_for_each_message() -> None:
+    gateway = FakeGateway()
+    gateway.raw_messages = {
+        "search-1": build_raw_message(
+            "search-1",
+            date_header="Tue, 02 Jan 2024 10:00:00 +0000",
+            internal_date=1704189600000,
+        ),
+        "search-2": build_raw_message(
+            "search-2",
+            date_header="Wed, 03 Jan 2024 11:00:00 +0000",
+            internal_date=1704279600000,
+        ),
+    }
+    registry = build_action_registry()
+    progress_messages: list[str | None] = []
+
+    registry.run_for_search(
+        "delete",
+        gateway,
+        raw_query="from:bob@example.com",
+        filters=MessageFilters(),
+        limit=10,
+        progress_callback=progress_messages.append,
+    )
+
+    assert progress_messages == [
+        "Deleting 1/2: 2024-01-02 10:00:00 | search-1 | from@example.com | Subject",
+        "Deleting 2/2: 2024-01-03 11:00:00 | search-2 | from@example.com | Subject",
+        None,
+    ]
+
+
 def test_action_registry_lists_names_with_descriptions() -> None:
     registry = build_action_registry()
 
     assert registry.list_actions() == [
         ("backup", "Back up matching messages as .eml files."),
         ("count", "Print the number of matching messages."),
+        ("delete", "Move all matching messages to Bin."),
         ("label-add", "Add a label to all matching messages."),
         ("label-remove", "Remove a label from all matching messages."),
         ("list", "List matching message headers."),
     ]
+
+
+def test_action_registry_returns_help_for_delete_action() -> None:
+    registry = build_action_registry()
+
+    help_text = registry.help_for_action("delete")
+
+    assert "Action: delete" in help_text
+    assert "Move all matching messages to Bin." in help_text
+    assert "No action-specific sub-options." in help_text
 
 
 def test_action_registry_returns_help_for_backup_action() -> None:
